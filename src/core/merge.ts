@@ -321,7 +321,7 @@ function findContainmentConflicts(
       const entity = entityOf(deletion, base);
       const deletingLabel = deletingSide === 'ours' ? labels.ours : labels.theirs;
       const otherLabel = deletingSide === 'ours' ? labels.theirs : labels.ours;
-      const summary = counterparts.map(describeChange).join('; ');
+      const summary = counterparts.map((c) => describeChange(c, base)).join('; ');
 
       groups.push({
         conflict: {
@@ -333,7 +333,7 @@ function findContainmentConflicts(
           ours: deletingSide === 'ours' ? 'dropped' : 'kept',
           theirs: deletingSide === 'ours' ? 'kept' : 'dropped',
           description:
-            `${deletingLabel}: ${describeChange(deletion)}. ${otherLabel}: ${summary}. ` +
+            `${deletingLabel}: ${describeChange(deletion, base)}. ${otherLabel}: ${summary}. ` +
             `Dropping it discards ${otherLabel}'s ${counterparts.length === 1 ? 'change' : `${counterparts.length} changes`}.`,
         },
         deletionKey,
@@ -463,7 +463,7 @@ function describeConflict(
     base: originOf(ours),
     ours: targetOf(ours),
     theirs: targetOf(theirs),
-    description: `${oursLabel}: ${describeChange(ours)}. ${theirsLabel}: ${describeChange(theirs)}.`,
+    description: `${oursLabel}: ${describeChange(ours, base)}. ${theirsLabel}: ${describeChange(theirs, base)}.`,
   };
 }
 

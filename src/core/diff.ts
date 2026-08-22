@@ -1,5 +1,7 @@
 import type { Id } from './ids';
 import {
+  findColumn,
+  findTable,
   sameType,
   type Column,
   type ColumnType,
@@ -49,6 +51,36 @@ export function subjectOf(change: Change): Id {
  * Merge pairs changes by (subject, attribute), so two edits to different
  * attributes of one entity never collide.
  */
+/**
+ * The table a change belongs to, for grouping a diff or migration by table.
+ *
+ * Most Change kinds carry a `tableId` directly. The two that don't —
+ * `constraint_dropped` and `index_dropped` — only carry the dropped entity's
+ * own id and name, because by the time the change exists the entity is gone
+ * from the head schema. Its owning table is still findable in `base`, where
+ * it existed a moment ago. `constraint_changed` / `index_changed` carry
+ * `to.tableId` directly, since `tableId` isn't patchable (D21) — the table
+ * cannot have changed underneath the constraint.
+ */
+export function tableOf(change: Change, base: Schema, head: Schema): { id: Id; name: string } | undefined {
+  const tableId = tableIdOf(change, base);
+  if (!tableId) return undefined;
+  const table = findTable(head, tableId) ?? findTable(base, tableId);
+  return table ? { id: table.id, name: table.name } : { id: tableId, name: tableId };
+}
+
+function tableIdOf(change: Change, base: Schema): Id | undefined {
+  if ('tableId' in change) return change.tableId;
+  switch (change.kind) {
+    case 'constraint_added': return change.constraint.tableId;
+    case 'constraint_changed': return change.to.tableId;
+    case 'constraint_dropped': return base.constraints.find((c) => c.id === change.constraintId)?.tableId;
+    case 'index_added': return change.index.tableId;
+    case 'index_changed': return change.to.tableId;
+    case 'index_dropped': return base.indexes.find((i) => i.id === change.indexId)?.tableId;
+  }
+}
+
 export function attributeOf(change: Change): string {
   switch (change.kind) {
     case 'table_created':
@@ -188,7 +220,23 @@ function diffIndexes(a: Schema, b: Schema): Change[] {
 }
 
 /** Plain-language rendering. These strings go straight into the UI. */
-export function describeChange(change: Change): string {
+/**
+ * Plain-language rendering. These strings render directly in the UI (the
+ * diff view, and merge conflict descriptions).
+ *
+ * `schema` is optional and resolves a column's CURRENT display name for the
+ * three kinds that carry only a `columnId` — `column_retyped`,
+ * `column_nullability_changed`, `column_default_changed`. Without it those
+ * fall back to printing the raw id, which is technically correct and
+ * practically useless: "Changed type of `c2ab91f...`" tells a user nothing.
+ * Every caller that has a schema in scope should pass one; the only reason
+ * this isn't required is that a handful of core tests construct changes with
+ * synthetic ids that don't resolve against any real schema.
+ */
+export function describeChange(change: Change, schema?: Schema): string {
+  const columnName = (columnId: Id): string =>
+    (schema && findColumn(schema, columnId)?.column.name) || columnId;
+
   switch (change.kind) {
     case 'table_created':
       return `Created table \`${change.name}\``;
@@ -203,11 +251,15 @@ export function describeChange(change: Change): string {
     case 'column_renamed':
       return `Renamed column \`${change.from}\` → \`${change.to}\``;
     case 'column_retyped':
-      return `Changed type of \`${change.columnId}\` from ${describeType(change.from)} to ${describeType(change.to)}`;
+      return `Changed type of \`${columnName(change.columnId)}\` from ${describeType(change.from)} to ${describeType(change.to)}`;
     case 'column_nullability_changed':
-      return change.to ? 'Made column nullable' : 'Made column NOT NULL';
+      return change.to
+        ? `Made \`${columnName(change.columnId)}\` nullable`
+        : `Made \`${columnName(change.columnId)}\` NOT NULL`;
     case 'column_default_changed':
-      return change.to === null ? 'Removed default' : `Set default to \`${change.to}\``;
+      return change.to === null
+        ? `Removed default from \`${columnName(change.columnId)}\``
+        : `Set default of \`${columnName(change.columnId)}\` to \`${change.to}\``;
     case 'constraint_added':
       return `Added ${change.constraint.kind.replace('_', ' ')} \`${change.constraint.name}\``;
     case 'constraint_dropped':

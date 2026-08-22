@@ -28,6 +28,11 @@ describe('conflicts — both sides changed the same attribute differently', () =
       branch([{ kind: 'retype_column', columnId: 'c2', type: { kind: 'varchar', length: 100 } }]),
     );
     expect(r.conflicts.map((c) => c.class)).toEqual(['concurrent_retype']);
+    // The description must name the column ("email"), not print the raw id
+    // ("c2") — a real bug caught by actually reading a rendered screen, not
+    // by any earlier assertion here, since none checked this string before.
+    expect(r.conflicts[0]!.description).toContain('`email`');
+    expect(r.conflicts[0]!.description).not.toContain('`c2`');
   });
 
   it('concurrent_nullability', () => {
