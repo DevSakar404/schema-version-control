@@ -1,5 +1,7 @@
 import type { Id } from './ids';
 import { attributeOf, describeChange, diff, subjectOf, type Change } from './diff';
+import { addedInto, closureOf } from './closure';
+import { columnsReferencedBy } from './schema';
 import { validate, type Hazard } from './validate';
 import type { ColumnType, Schema, Table } from './schema';
 
@@ -63,15 +65,40 @@ export function threeWayMerge(
 ): MergeResult {
   const oursLabel = options.oursLabel ?? 'ours';
   const theirsLabel = options.theirsLabel ?? 'theirs';
+  const labels = { ours: oursLabel, theirs: theirsLabel };
 
   const oursChanges = keyChanges(diff(base, ours));
   const theirsChanges = keyChanges(diff(base, theirs));
+  const byResolution = new Map(resolutions.map((r) => [r.conflictId, r]));
 
   const conflicts: Conflict[] = [];
   const applied: Change[] = [];
-  const byResolution = new Map(resolutions.map((r) => [r.conflictId, r]));
 
+  // Pass 1 — deletions versus anything in their dependency closure. Runs
+  // first because it decides which keys the pairwise pass must leave alone.
+  const groups = findContainmentConflicts(base, oursChanges, theirsChanges, labels);
+  const claimed = new Set<string>();
+  for (const group of groups) {
+    claimed.add(group.deletionKey);
+    for (const key of group.counterpartKeys) claimed.add(key);
+
+    const resolution = byResolution.get(group.conflict.id);
+    if (!resolution) {
+      // Unresolved: keep the entity rather than destroy it. The merge is
+      // provisional until a human decides, and the recoverable choice is the
+      // one that does not discard a colleague's work.
+      conflicts.push(group.conflict);
+      applied.push(...group.counterparts);
+      continue;
+    }
+    if (resolution.choice === 'ours') applied.push(group.deletion);
+    else applied.push(...group.counterparts);
+  }
+
+  // Pass 2 — both sides changed the same attribute of the same entity.
   for (const key of new Set([...oursChanges.keys(), ...theirsChanges.keys()])) {
+    if (claimed.has(key)) continue;
+
     const mine = oursChanges.get(key);
     const yours = theirsChanges.get(key);
 
@@ -79,8 +106,8 @@ export function threeWayMerge(
     if (yours && !mine) { applied.push(yours); continue; }
     if (!mine || !yours) continue;
 
-    // Both sides changed the same attribute. Identical targets are convergent
-    // — two people reaching the same conclusion is agreement, not conflict.
+    // Identical targets are convergent — two people reaching the same
+    // conclusion is agreement, not conflict.
     if (sameTarget(mine, yours)) { applied.push(mine); continue; }
 
     const conflict = describeConflict(key, base, mine, yours, oursLabel, theirsLabel);
@@ -93,6 +120,110 @@ export function threeWayMerge(
 
   const schema = applyChanges(base, applied);
   return { schema, conflicts, hazards: validate(schema), applied };
+}
+
+/* -------------------------------------------------- containment (§7.2) */
+
+interface ContainmentGroup {
+  conflict: Conflict;
+  deletionKey: string;
+  deletion: Change;
+  counterparts: Change[];
+  counterpartKeys: string[];
+}
+
+const isDeletion = (c: Change): boolean => c.kind.endsWith('_dropped');
+const isAddition = (c: Change): boolean =>
+  c.kind.endsWith('_added') || c.kind === 'table_created';
+
+/** What a newly created entity attaches to, so additions can be tested against a closure. */
+function addedRefs(change: Change): { tableId?: Id; referencedTableId?: Id; columnIds?: Id[] } {
+  switch (change.kind) {
+    case 'column_added':
+      return { tableId: change.tableId };
+    case 'constraint_added':
+      return {
+        tableId: change.constraint.tableId,
+        referencedTableId:
+          change.constraint.kind === 'foreign_key' ? change.constraint.referencedTableId : undefined,
+        columnIds: columnsReferencedBy(change.constraint),
+      };
+    case 'index_added':
+      return { tableId: change.index.tableId, columnIds: columnsReferencedBy(change.index) };
+    default:
+      return {};
+  }
+}
+
+/**
+ * Deleting an entity conflicts with any change to anything it contains or
+ * that references it.
+ *
+ * Without this, dropping `users` on one branch while another adds a column to
+ * `users` produces no overlapping key at all — the merge reports clean and
+ * then applies a column to a table that no longer exists.
+ */
+function findContainmentConflicts(
+  base: Schema,
+  oursChanges: Map<string, Change>,
+  theirsChanges: Map<string, Change>,
+  labels: { ours: string; theirs: string },
+): ContainmentGroup[] {
+  const groups: ContainmentGroup[] = [];
+
+  const scan = (
+    deleting: Map<string, Change>,
+    other: Map<string, Change>,
+    deletingSide: 'ours' | 'theirs',
+  ) => {
+    for (const [deletionKey, deletion] of deleting) {
+      if (!isDeletion(deletion)) continue;
+      const deletedId = subjectOf(deletion);
+      const closure = closureOf(base, deletedId);
+
+      const counterpartKeys: string[] = [];
+      const counterparts: Change[] = [];
+      for (const [key, change] of other) {
+        // Both sides deleting is convergent, not a conflict.
+        if (isDeletion(change)) continue;
+        const inClosure = closure.has(subjectOf(change));
+        const attachesToClosure = isAddition(change) && addedInto(addedRefs(change), deletedId, closure);
+        if (inClosure || attachesToClosure) {
+          counterpartKeys.push(key);
+          counterparts.push(change);
+        }
+      }
+      if (!counterparts.length) continue;
+
+      const entity = entityOf(deletion, base);
+      const deletingLabel = deletingSide === 'ours' ? labels.ours : labels.theirs;
+      const otherLabel = deletingSide === 'ours' ? labels.theirs : labels.ours;
+      const summary = counterparts.map(describeChange).join('; ');
+
+      groups.push({
+        conflict: {
+          id: deletionKey,
+          class: 'delete_modify',
+          entity,
+          attribute: '__exists',
+          base: 'present',
+          ours: deletingSide === 'ours' ? 'dropped' : 'kept',
+          theirs: deletingSide === 'ours' ? 'kept' : 'dropped',
+          description:
+            `${deletingLabel}: ${describeChange(deletion)}. ${otherLabel}: ${summary}. ` +
+            `Dropping it discards ${otherLabel}'s ${counterparts.length === 1 ? 'change' : `${counterparts.length} changes`}.`,
+        },
+        deletionKey,
+        deletion,
+        counterparts,
+        counterpartKeys,
+      });
+    }
+  };
+
+  scan(oursChanges, theirsChanges, 'ours');
+  scan(theirsChanges, oursChanges, 'theirs');
+  return groups;
 }
 
 /* ------------------------------------------------------------- pairing */

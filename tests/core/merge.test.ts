@@ -1,32 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { threeWayMerge } from '@/core/merge';
 import { applyOps, type SchemaOp } from '@/core/ops';
-import { emptySchema, findColumn, type Schema } from '@/core/schema';
+import { findColumn, type Schema } from '@/core/schema';
+import { base } from './fixture';
 import { counterIdGen } from '@/core/ids';
-
-/**
- * Fixture ids are stable: t1 = users, c1 = id, c2 = email, c3 = age,
- * k1 = users_pkey, i1 = idx_email.
- */
-export function base(): Schema {
-  const next = counterIdGen('t');
-  let s = applyOps(emptySchema(), [{ kind: 'create_table', name: 'users' }], next);
-  const cols = counterIdGen('c');
-  s = applyOps(s, [
-    { kind: 'add_column', tableId: 't1', name: 'id', type: { kind: 'int' }, nullable: false, default: null },
-    { kind: 'add_column', tableId: 't1', name: 'email', type: { kind: 'varchar', length: 255 }, nullable: false, default: null },
-    { kind: 'add_column', tableId: 't1', name: 'age', type: { kind: 'int' }, nullable: true, default: null },
-  ], cols);
-  const k = counterIdGen('k');
-  s = applyOps(s, [
-    { kind: 'add_constraint', constraint: { name: 'users_pkey', tableId: 't1', kind: 'primary_key', columnIds: ['c1'] } },
-  ], k);
-  const i = counterIdGen('i');
-  s = applyOps(s, [
-    { kind: 'add_index', index: { name: 'idx_email', tableId: 't1', columnIds: ['c2'], unique: true, method: 'btree', where: null } },
-  ], i);
-  return s;
-}
 
 const branch = (ops: SchemaOp[], prefix = 'n') => applyOps(base(), ops, counterIdGen(prefix));
 const merge = (ours: Schema, theirs: Schema) =>
