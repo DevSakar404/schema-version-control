@@ -5,7 +5,7 @@ import { getProject } from '@/db/projects';
 import { aheadBehind, findMergeBase, type Commit } from '@/core/history';
 import { threeWayMerge, type Resolution, type MergeResult } from '@/core/merge';
 import { plan, renderMigration, type Statement } from '@/core/migrate';
-import { diff, type Change } from '@/core/diff';
+import { diff, tableOf, type Change } from '@/core/diff';
 import { validate } from '@/core/validate';
 import { applyOps, type SchemaOp } from '@/core/ops';
 import { nanoIdGen, type Id } from '@/core/ids';
@@ -141,12 +141,48 @@ export async function commitOps(
   return { commit: meta, headCommitId: commit.id };
 }
 
-export async function compareBranches(baseBranchId: Id, headBranchId: Id): Promise<Change[]> {
+export interface CompareGroup {
+  table: { id: Id; name: string } | null;
+  changes: Change[];
+}
+
+export interface CompareResult {
+  changes: Change[];
+  groups: CompareGroup[];
+  /** Exposed so a server-rendered view can resolve column/table display
+   *  names via describeChange(change, headSchema) — see design.md §6.1. */
+  headSchema: Schema;
+}
+
+export async function compareBranches(baseBranchId: Id, headBranchId: Id): Promise<CompareResult> {
   const [left, right] = await Promise.all([
     getBranchSchema(baseBranchId),
     getBranchSchema(headBranchId),
   ]);
-  return diff(left.schema, right.schema);
+  const changes = diff(left.schema, right.schema);
+  return { changes, groups: groupByTable(changes, left.schema, right.schema), headSchema: right.schema };
+}
+
+/**
+ * Group changes by table, in first-appearance order, so the diff view reads
+ * top to bottom the way a person would scan the schema rather than jumping
+ * around by change kind.
+ */
+function groupByTable(changes: Change[], base: Schema, head: Schema): CompareGroup[] {
+  const order: (Id | null)[] = [];
+  const byTable = new Map<Id | null, CompareGroup>();
+
+  for (const change of changes) {
+    const table = tableOf(change, base, head) ?? null;
+    const key = table?.id ?? null;
+    if (!byTable.has(key)) {
+      byTable.set(key, { table, changes: [] });
+      order.push(key);
+    }
+    byTable.get(key)!.changes.push(change);
+  }
+
+  return order.map((key) => byTable.get(key)!);
 }
 
 export interface MergePreview extends MergeResult {
