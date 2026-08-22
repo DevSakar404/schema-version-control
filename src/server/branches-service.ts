@@ -1,4 +1,4 @@
-import { NotFound, Conflicted, Unprocessable } from './http';
+import { BadRequest, NotFound, Conflicted, Unprocessable } from './http';
 import { getBranch, listBranches, advanceHead, createBranch } from '@/db/branches';
 import { getCommit, getCommitGraph, insertCommit } from '@/db/commits';
 import { getProject } from '@/db/projects';
@@ -66,7 +66,22 @@ export async function getBranchSchema(branchId: Id): Promise<{ schema: Schema; h
 export async function branchFrom(projectId: Id, name: string, fromCommitId: Id) {
   const source = await getCommit(fromCommitId);
   if (!source) throw new NotFound(`commit '${fromCommitId}' does not exist`);
-  return createBranch(projectId, name, fromCommitId);
+
+  try {
+    return await createBranch(projectId, name, fromCommitId);
+  } catch (e) {
+    // No pre-check SELECT — that's a race (two people naming a branch at the
+    // same moment) waiting to happen. Attempt the insert and translate the
+    // unique (project_id, name) violation the database already enforces.
+    if (isUniqueViolation(e)) {
+      throw new BadRequest(`a branch named '${name}' already exists in this project`);
+    }
+    throw e;
+  }
+}
+
+function isUniqueViolation(e: unknown): boolean {
+  return typeof e === 'object' && e !== null && 'code' in e && (e as { code: unknown }).code === '23505';
 }
 
 /**
