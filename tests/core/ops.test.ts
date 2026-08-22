@@ -177,3 +177,49 @@ describe('unknown ids fail loudly', () => {
     expect(() => applyOp(schema, op, counterIdGen('z'))).toThrow(/nope/);
   });
 });
+
+describe('pre-supplied ids — client/server replay divergence', () => {
+  // Caught live: a UI batches ops client-side, computes a local preview with
+  // its own id generator, then sends the same ops to the server, which
+  // replays them with a DIFFERENT generator. If op 2 references an id op 1
+  // minted, and each side mints independently, op 2's reference points at an
+  // id the other side never produced. This is that exact shape, reduced to a
+  // core-only test with no UI involved.
+  it('a later op can reference an id an EARLIER op pre-supplied, across two different generators', () => {
+    // "Client" builds the ops, pre-assigning ids as it goes — this is what a
+    // real UI does at the moment each op is constructed.
+    const columnId = 'client-chosen-column-id';
+    const ops: SchemaOp[] = [
+      { kind: 'create_table', name: 'users', id: 'client-chosen-table-id' },
+      {
+        kind: 'add_column', tableId: 'client-chosen-table-id', name: 'age',
+        type: { kind: 'int' }, nullable: true, default: null, id: columnId,
+      },
+      {
+        kind: 'add_constraint',
+        constraint: { name: 'age_positive', tableId: 'client-chosen-table-id', kind: 'check', expression: { template: '{0} > 0', columnIds: [columnId] } },
+      },
+    ];
+
+    // "Server" replays with a totally unrelated generator. If the fix works,
+    // this generator is never even consulted for the pre-supplied ids.
+    const serverSchema = applyOps(emptySchema(), ops, counterIdGen('server'));
+
+    const constraint = serverSchema.constraints[0]!;
+    expect(constraint.kind === 'check' && constraint.expression.columnIds).toEqual([columnId]);
+    // The reference must resolve to a REAL column, not dangle.
+    expect(findColumn(serverSchema, columnId)?.column.name).toBe('age');
+  });
+
+  it('mintId is not called at all when every op pre-supplies its id', () => {
+    let calls = 0;
+    const countingGen = () => { calls++; return `should-not-happen-${calls}`; };
+    applyOp(emptySchema(), { kind: 'create_table', name: 'x', id: 'fixed-id' }, countingGen);
+    expect(calls).toBe(0);
+  });
+
+  it('omitting id falls back to mintId, unchanged from every other test in this file', () => {
+    const s = applyOp(emptySchema(), { kind: 'create_table', name: 'x' }, counterIdGen('z'));
+    expect(s.tables[0]!.id).toBe('z1');
+  });
+});

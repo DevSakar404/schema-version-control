@@ -14,6 +14,28 @@ import {
  *
  * Every operation is pure: it returns a new Schema and never mutates its
  * input. Id generation is injected so tests can assert on exact values.
+ *
+ * Every op that creates an entity accepts an OPTIONAL `id`. When absent,
+ * `mintId()` assigns one, which is what every core test does. When present,
+ * that id is used verbatim and `mintId` is not called for it.
+ *
+ * This exists for a real failure, not a hypothetical one: a UI that batches
+ * several ops client-side before committing computes a live preview locally
+ * (so the user sees what they're building), then sends the same op list to
+ * the server to actually apply. If op 2 references an entity created by op 1
+ * — a CHECK constraint added right after the column it checks — and each
+ * side mints its own fresh id for that column, the reference in op 2 points
+ * at an id the OTHER side never produced. The server's replay then reports
+ * "references a column that no longer exists" for a column that, from the
+ * user's point of view, obviously exists — it's sitting right there in the
+ * form they just submitted.
+ *
+ * The fix is that only ONE side mints an id for any given entity, ever. The
+ * client generates it at the moment it builds the op and embeds it in the op
+ * itself; the server's replay then reuses that same id instead of minting a
+ * competing one. `mintId` remains the source of truth for every call site
+ * that does not pre-supply an id — direct programmatic construction, tests,
+ * and any op the UI doesn't build this way.
  */
 
 /**
@@ -31,7 +53,7 @@ export type ConstraintDraft = DistributiveOmit<Constraint, 'id'>;
 /** The patchable surface of a constraint. */
 export type ConstraintPatch = Partial<DistributiveOmit<Constraint, 'id' | 'kind' | 'tableId'>>;
 export type SchemaOp =
-  | { kind: 'create_table'; name: string }
+  | { kind: 'create_table'; name: string; id?: Id }
   | { kind: 'drop_table'; tableId: Id }
   | { kind: 'rename_table'; tableId: Id; name: string }
   | {
@@ -41,13 +63,14 @@ export type SchemaOp =
       type: Column['type'];
       nullable: boolean;
       default: string | null;
+      id?: Id;
     }
   | { kind: 'drop_column'; columnId: Id }
   | { kind: 'rename_column'; columnId: Id; name: string }
   | { kind: 'retype_column'; columnId: Id; type: Column['type'] }
   | { kind: 'set_column_nullable'; columnId: Id; nullable: boolean }
   | { kind: 'set_column_default'; columnId: Id; default: string | null }
-  | { kind: 'add_constraint'; constraint: ConstraintDraft }
+  | { kind: 'add_constraint'; constraint: ConstraintDraft; id?: Id }
   | { kind: 'drop_constraint'; constraintId: Id }
   | {
       kind: 'alter_constraint';
@@ -56,7 +79,7 @@ export type SchemaOp =
        *  different rule, and that is honestly a drop plus an add. */
       patch: ConstraintPatch;
     }
-  | { kind: 'add_index'; index: Omit<Index, 'id'> }
+  | { kind: 'add_index'; index: Omit<Index, 'id'>; id?: Id }
   | { kind: 'drop_index'; indexId: Id }
   | { kind: 'alter_index'; indexId: Id; patch: Partial<Omit<Index, 'id' | 'tableId'>> };
 
@@ -76,7 +99,7 @@ export function applyOp(schema: Schema, op: SchemaOp, mintId: IdGen): Schema {
     case 'create_table':
       return {
         ...schema,
-        tables: [...schema.tables, { id: mintId(), name: op.name, columns: [] }],
+        tables: [...schema.tables, { id: op.id ?? mintId(), name: op.name, columns: [] }],
       };
 
     case 'drop_table':
@@ -90,7 +113,7 @@ export function applyOp(schema: Schema, op: SchemaOp, mintId: IdGen): Schema {
     case 'add_column': {
       requireTable(schema, op.tableId);
       const column: Column = {
-        id: mintId(),
+        id: op.id ?? mintId(),
         name: op.name,
         type: op.type,
         nullable: op.nullable,
@@ -118,7 +141,7 @@ export function applyOp(schema: Schema, op: SchemaOp, mintId: IdGen): Schema {
     case 'add_constraint':
       return {
         ...schema,
-        constraints: [...schema.constraints, { ...op.constraint, id: mintId() } as Constraint],
+        constraints: [...schema.constraints, { ...op.constraint, id: op.id ?? mintId() } as Constraint],
       };
 
     case 'drop_constraint':
@@ -139,7 +162,7 @@ export function applyOp(schema: Schema, op: SchemaOp, mintId: IdGen): Schema {
     }
 
     case 'add_index':
-      return { ...schema, indexes: [...schema.indexes, { ...op.index, id: mintId() }] };
+      return { ...schema, indexes: [...schema.indexes, { ...op.index, id: op.id ?? mintId() }] };
 
     case 'drop_index':
       requireIndex(schema, op.indexId);
