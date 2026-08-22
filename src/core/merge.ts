@@ -41,11 +41,26 @@ export type Resolution =
   | { conflictId: string; choice: 'theirs' }
   | { conflictId: string; choice: 'custom'; value: unknown };
 
+/**
+ * A hazard plus who touched the entities involved (design.md §8.2).
+ *
+ * validate() sees only a final state and cannot name an author, so
+ * attribution happens here, where both branches' change lists are in hand.
+ *
+ * This is correlation, not causation: it reports who touched the entities
+ * involved, which is not proof of blame. The UI wording says "touched",
+ * never "caused". A hazard raised on an ordinary commit has no ours/theirs
+ * at all and carries `causedBy: null`.
+ */
+export interface AttributedHazard extends Hazard {
+  causedBy: { ours: Change[]; theirs: Change[] } | null;
+}
+
 export interface MergeResult {
   schema: Schema;
   /** Unresolved only. */
   conflicts: Conflict[];
-  hazards: Hazard[];
+  hazards: AttributedHazard[];
   /** Auto-merged changes, for display. */
   applied: Change[];
 }
@@ -119,7 +134,115 @@ export function threeWayMerge(
   }
 
   const schema = applyChanges(base, applied);
-  return { schema, conflicts, hazards: validate(schema), applied };
+
+  // Pass 3 — two branches independently landing on the same name.
+  conflicts.push(...findNameCollisions(schema, oursChanges, theirsChanges, labels));
+
+  const hazards = validate(schema).map((h) => attribute(h, schema, oursChanges, theirsChanges));
+  return { schema, conflicts, hazards, applied };
+}
+
+/* ------------------------------------------------- name collisions (§7.4) */
+
+/**
+ * Two branches rename *different* entities to the same final name.
+ *
+ * Neither entity conflicts with any other entity — each side's change is
+ * unambiguous alone — yet the result has two columns called `contact` in one
+ * table and is invalid. It surfaces as a conflict rather than a hazard
+ * because resolving it needs a human to choose names; there is no mechanical
+ * fix.
+ *
+ * When the duplicate comes from one branch alone it is that branch's own bug,
+ * and validate reports it as a duplicate_name hazard instead.
+ */
+function findNameCollisions(
+  merged: Schema,
+  oursChanges: Map<string, Change>,
+  theirsChanges: Map<string, Change>,
+  labels: { ours: string; theirs: string },
+): Conflict[] {
+  const sideOf = (id: Id): 'ours' | 'theirs' | null => {
+    const named = (m: Map<string, Change>) => m.has(`${id}:name`) || m.has(`${id}:__exists`);
+    if (named(oursChanges)) return 'ours';
+    if (named(theirsChanges)) return 'theirs';
+    return null;
+  };
+
+  const conflicts: Conflict[] = [];
+
+  const check = (
+    entities: { id: Id; name: string }[],
+    kind: 'table' | 'column',
+    scope: string,
+  ) => {
+    const groups = new Map<string, { id: Id; name: string }[]>();
+    for (const e of entities) {
+      groups.set(e.name, [...(groups.get(e.name) ?? []), e]);
+    }
+    for (const [name, members] of groups) {
+      if (members.length < 2) continue;
+      const sides = new Set(members.map((m) => sideOf(m.id)).filter(Boolean));
+      // Only a conflict when BOTH branches contributed to the collision.
+      if (sides.size < 2) continue;
+      const first = members[0]!;
+      conflicts.push({
+        id: `${members.map((m) => m.id).sort().join('+')}:name_collision`,
+        class: 'name_collision',
+        entity: { kind, id: first.id, displayName: name },
+        attribute: 'name',
+        base: null,
+        ours: name,
+        theirs: name,
+        description:
+          `${labels.ours} and ${labels.theirs} each produced a ${kind} named \`${name}\`${scope}. ` +
+          `Pick a different name for one of them.`,
+      });
+    }
+  };
+
+  check(merged.tables, 'table', '');
+  for (const table of merged.tables) {
+    check(table.columns, 'column', ` on \`${table.name}\``);
+  }
+  return conflicts;
+}
+
+/* ---------------------------------------------------- attribution (§8.2) */
+
+/** The hazard's entity plus everything it references — the correlation surface. */
+function relatedIds(schema: Schema, entityId: Id): Set<Id> {
+  const related = new Set<Id>(closureOf(schema, entityId));
+  const constraint = schema.constraints.find((c) => c.id === entityId);
+  if (constraint) {
+    related.add(constraint.tableId);
+    for (const id of columnsReferencedBy(constraint)) related.add(id);
+    if (constraint.kind === 'foreign_key') related.add(constraint.referencedTableId);
+  }
+  const index = schema.indexes.find((i) => i.id === entityId);
+  if (index) {
+    related.add(index.tableId);
+    for (const id of columnsReferencedBy(index)) related.add(id);
+  }
+  return related;
+}
+
+function attribute(
+  hazard: Hazard,
+  schema: Schema,
+  oursChanges: Map<string, Change>,
+  theirsChanges: Map<string, Change>,
+): AttributedHazard {
+  const related = relatedIds(schema, hazard.entity.id);
+  const touching = (m: Map<string, Change>) =>
+    [...m.values()].filter((c) => related.has(subjectOf(c)));
+
+  const ours = touching(oursChanges);
+  const theirs = touching(theirsChanges);
+  return {
+    ...hazard,
+    causedBy: ours.length === 0 && theirs.length === 0 ? null : { ours, theirs },
+  };
 }
 
 /* -------------------------------------------------- containment (§7.2) */
