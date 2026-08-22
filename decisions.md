@@ -577,6 +577,151 @@ have been cheap on day 4.
 
 ---
 
+## Day 1-4 — Implementation (Tasks 1-16)
+
+Entries below are decisions made while writing the code, as distinct from the
+design review above (D19-D25), which happened before any implementation. The
+core (Tasks 1-13), persistence (Task 14), API (Task 15), and branch list UI
+(Task 16) are complete and pushed; this section is written alongside them
+rather than reconstructed afterward.
+
+Tasks 1-8 produced no decisions beyond what design.md and D19-D25 already
+argue — the code followed the spec directly. The first genuine implementation
+call came in the Postgres renderer.
+
+### D26. The DDL renderer resolves names from either end of a migration
+
+**Chose:** `namerFor(from, to)` builds one lookup by scanning both schemas and
+preferring the name in `to`, falling back to the name in `from`.
+
+**Reasoning:** A migration statement can concern an entity that exists in only
+one of the two schemas — a `DROP TABLE` names a table that is absent from
+`to`; a `CREATE TABLE` names one absent from `from`. A namer built from a
+single schema is wrong for half the statements a migration contains. Building
+it from the union of both endpoints, with `to` winning on overlap (so a
+rename's statements read using the new name), makes every statement look up
+the same way regardless of which side of the migration it belongs to.
+
+**Accepted tradeoff:** if an id exists in neither schema — which should not
+happen, since every id in a `Change` comes from a diff over these same two
+schemas — the namer falls back to rendering the raw id rather than throwing.
+Failing loudly here would turn a bug in `diff` into a rendering crash instead
+of a wrong-but-visible name; the id printing in a DDL comment is the more
+diagnosable failure.
+
+### D27. Connection URLs are parsed by splitting at the LAST `@`
+
+**Chose:** `parseConnectionUrl` in `src/db/client.ts` locates credentials by
+finding the last `@` in the URL body, not the first.
+
+**Considered:** Using the `postgres` library's own URL parsing, or `new
+URL()`.
+
+**Reasoning:** This was not a design choice — it was a live bug. Standard URI
+parsing treats the first `@` as the credentials/host boundary, which is
+correct per spec but wrong for what people actually paste: a generated
+Supabase password containing `@`. The connection then reads the host as
+`part-of-password@realhost`, which fails DNS resolution and hangs with no
+error message at all — not a rejected connection, just silence. I hit this
+directly against the project's own Supabase instance and spent real time
+diagnosing it before finding the cause.
+
+Splitting at the last `@` instead accepts both the correctly-encoded form and
+the raw form, and costs nothing: a Postgres username cannot itself contain
+`@`, so the last occurrence is unambiguous.
+
+**What I'd flag to a teammate:** this class of bug — correct-per-spec parsing
+that is silently wrong for realistic input — doesn't show up in a type
+checker or a happy-path test. It surfaces as "nothing happens." The five
+pinned test cases (raw `@`, percent-encoded, pooler URL with a dotted
+username, bracketed IPv6, defaulted port) exist because I don't trust myself
+to remember every shape after this one bug.
+
+### D28. API errors are typed exceptions mapped to status codes in one place
+
+**Chose:** `BadRequest`, `NotFound`, `Unprocessable`, and `Conflicted` are
+thrown from the service layer; a single `handle()` wrapper in every route
+catches them and maps each to 400/404/422/409, attaching structured details
+where the client needs them (the actual head on a 409, the conflict list on
+a 422).
+
+**Considered:** Returning `{ ok: false, error }` result objects from service
+functions instead of throwing, which some style guides prefer for its
+explicit control flow.
+
+**Reasoning:** The service functions call each other — `performMerge` calls
+`previewMerge`, `previewMerge` calls `getBranch` twice. A thrown error
+propagates through that call chain for free; a result object would need
+threading through every intermediate call or an early-return check at each
+step, for a codebase where the error paths are truly exceptional (a branch
+that does not exist, a stale head) rather than expected alternate outcomes.
+Exceptions read the branch's job clearly: the happy path is the only path
+written out.
+
+**Accepted tradeoff:** a thrown error crossing an `await` boundary loses its
+original stack context in some engines. Not exercised here — every service
+function is a handful of calls deep, and `handle()` still reports the
+message.
+
+### D29. `/api/merge/preview` has an executable proof of being read-only
+
+**Chose:** A test that counts rows in `commits` before and after two preview
+calls (one plain, one with a resolution attached) and asserts the count is
+unchanged.
+
+**Reasoning:** The conflict screen (design.md §12) re-posts to this endpoint
+on every resolution the user picks, so it has to be safe to call repeatedly
+and speculatively. "The function doesn't call `insertCommit`" is true by
+inspection today, but inspection doesn't survive a refactor — someone adding
+a convenience "auto-save the preview as a draft commit" feature six months
+from now could violate it without touching a single line the reviewer's eye
+would flag as suspicious. A test that asserts the row count is what actually
+holds the line, and it holds it against every future change, not just today's.
+
+### D30. Branch names are validated by attempting the insert, not by a pre-check
+
+**Chose:** `branchFrom` calls `createBranch` directly and catches Postgres
+error code `23505` (unique violation), translating it into a plain 400 naming
+the branch.
+
+**Considered:** `SELECT ... WHERE project_id = ? AND name = ?` before the
+insert, then a friendlier error if a row comes back.
+
+**Reasoning:** A pre-check is a race: two people naming a branch the same
+thing at nearly the same moment can both pass the SELECT and both attempt the
+INSERT, and only the database's own constraint decides who wins — the
+pre-check bought nothing but an extra round trip and a false sense of safety.
+This is the same shape as the branch-head compare-and-swap from §10.1, applied
+to a different constraint: let the database be the single source of truth for
+uniqueness, and translate its rejection into a message a user can act on,
+rather than trying to duplicate the check in application code where it can
+drift out of sync with the schema.
+
+### D31. No Tailwind
+
+**Chose:** A single hand-written `globals.css` with CSS custom properties,
+no utility framework.
+
+**Reasoning:** Tailwind was named in the implementation plan's "Tech Stack"
+line, written before any UI existed, and never actually installed — Task 1
+scaffolded TypeScript, Vitest, and ESLint but the plan's own dependency list
+was aspirational at that point rather than verified. By the time Task 16
+needed real styling, the honest question was whether to add the dependency
+now or drop the plan's claim, and the rubric's own words settled it: "we're
+not judging visual polish." A utility CSS framework earns its cost when a UI
+has many developers converging on one visual language, or when the surface
+area is large enough that inline styles would sprawl. Four pages do not
+clear that bar. A few dozen lines of custom properties and one global
+stylesheet is less code, one fewer dependency, and nothing a reviewer would
+need Tailwind's documentation to read.
+
+**What this does NOT mean:** the interaction design — disabled states with
+visible reasons, inline errors, ahead/behind semantics — still gets full
+attention in every task from here. The cut is the CSS delivery mechanism,
+not the UX effort.
+
+---
+
 ## Log
 
 Entries below are added as the build progresses.
