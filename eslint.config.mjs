@@ -3,6 +3,16 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   { ignores: ['node_modules/**', '.next/**', 'next-env.d.ts'] },
+  {
+    rules: {
+      // Allow the destructure-to-omit idiom: `const { secret: _secret, ...rest }`.
+      '@typescript-eslint/no-unused-vars': ['error', {
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+        ignoreRestSiblings: true,
+      }],
+    },
+  },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
