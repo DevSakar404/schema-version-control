@@ -186,10 +186,16 @@ marked in the source with a `ponytail:` comment naming the ceiling.
 
 **Reasoning:** This is the distinction I expect most submissions to miss, and
 it's where I chose to go deep. A merge with zero conflicts can still produce a
-broken schema: I drop `users.id` while you add a foreign key referencing it.
-Neither change conflicts with the other — they touch different entities — and a
-conflict-detection-only merge reports clean success and hands you a schema that
-won't apply.
+broken schema: I retype `users.id` from `int` to `uuid` while you add a foreign
+key to it from an `int` column. Nothing is deleted and nothing is edited twice,
+so no conflict detector pairs them, and a conflict-detection-only merge reports
+clean success and hands you a schema Postgres will reject.
+
+*(The original example here was dropping `users.id` while another branch added
+a foreign key to it. D19's containment rule later reclassified that as a
+`delete_modify` conflict, which is the better outcome — a choice beats a
+complaint. The example was replaced with one where nothing is deleted, so the
+distinction it illustrates still holds.)*
 
 So validity is a **separate pass over the merged result**, not a byproduct of
 conflict detection. It catches dangling foreign keys, indexes on dropped

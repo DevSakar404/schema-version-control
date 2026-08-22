@@ -475,11 +475,25 @@ because the user trusted it. The rule adopted: if Postgres would reject the
 DDL, `validate` must catch it first.
 
 **Why this is a separate pass.** A merge with zero conflicts can still produce a
-broken schema. I drop `users.id`; you add a foreign key referencing it. The two
-changes touch different entities, so no conflict detector will pair them, and a
-conflict-only merge reports clean success while handing back a schema that will
-not apply. Validity is a property of the *combined result*, so it can only be
-checked after combining.
+broken schema:
+
+> I change `users.id` from `int` to `uuid`. You add a foreign key from
+> `orders.user_id`, which is an `int`, to `users.id`.
+
+Nothing is deleted, so §7.2's containment check does not fire. Nothing is
+edited twice, so no key appears on both sides. Both changes apply cleanly and
+the result is a foreign key between two columns of different types, which
+Postgres rejects. Validity is a property of the *combined result*, so it can
+only be checked after combining.
+
+**Where the boundary sits.** Containment (§7.2) catches combinations involving
+a *deletion* — those become conflicts, because a human must choose whether the
+deletion or the other change survives. Hazards are what remains: combinations
+where nothing was deleted and nobody disagreed, so there is no choice to
+offer, only a defect to report. If a hazard could have been a conflict, it
+should have been — a choice is always better UX than a complaint. Dropping
+`users.id` while another branch adds a foreign key to it therefore surfaces as
+a `delete_modify` conflict, not a hazard.
 
 `validate` also runs on every commit, so a branch cannot silently accumulate an
 invalid state that only surfaces at merge time.
@@ -709,8 +723,9 @@ change kind; every row states what changed in words.
    theirs side by side and three actions: take ours, take theirs, write my own.
 2. *Hazards*, separated from conflicts because they are not disagreements —
    nobody was wrong, the combination is. Where `causedBy` correlates changes
-   from both branches (§8.2), the card names them: "Ana dropped `users.id`;
-   Ben added a foreign key referencing it." Where it correlates only one side,
+   from both branches (§8.2), the card names them: "Ana retyped `users.id` to
+   `uuid`; Ben added a foreign key to it from an `int` column." Where it
+   correlates only one side,
    or nothing, it states the defect alone rather than inventing an author.
    The wording is *touched*, never *caused* — the correlation is by entity,
    not a proof of blame.
