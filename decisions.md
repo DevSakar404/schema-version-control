@@ -391,6 +391,186 @@ paths that can disagree about the same fact.
 
 ---
 
+---
+
+## Day 0 — Design review: seven cases the design got wrong
+
+A pass over the design hunting for inputs an ordinary user could produce that
+the spec mishandled. It found seven. Three were outright bugs in a spec I had
+already called finished, and two more were types the product could never
+actually produce. Recorded in full rather than quietly corrected, because the
+pattern in them is the useful part: **every one is a case where I solved a
+problem for one entity kind and assumed it generalised.**
+
+### D19. Delete/modify must be transitive over containment
+
+**Chose:** Deleting an entity conflicts with any change to anything in its
+dependency closure — a table owns its columns, constraints and indexes, and is
+referenced by foreign keys pointing at it.
+
+**The bug:** Merge compared changes keyed by `(entityId, attribute)`. Dropping
+`users` is keyed on the table; adding a column `nickname` to `users` is keyed
+on the new column. No key appears on both sides, so the merge reported **clean**
+and then tried to add a column to a table that no longer existed.
+
+**Reasoning:** Key-wise comparison only finds people who touched *the same
+entity*, but the most common real-world schema conflict is two people touching
+*related* entities. That is a conflict rather than a hazard: the resolution is
+a genuine either/or (keep the table and Ben's column, or drop both), and the
+description has to say plainly that choosing "drop" discards a colleague's
+work.
+
+**Why I missed it:** I built conflict detection around the case I had designed
+for — two people editing one column — and never asked what happens when the
+two changes are at different levels of the tree.
+
+### D20. Renames are emitted before creates, and ordered among themselves
+
+**Chose:** Move renames to phase 4, ahead of table creation and column
+addition. Within that phase, order renames by name dependency and break cycles
+with a temporary name.
+
+**Considered:** Leaving the original order and documenting name reuse as
+unsupported.
+
+**The bug, in two parts.** The original phase list created tables at 4 and
+renamed at 5. So renaming `users` to `accounts` and then creating a new
+`users` emitted `CREATE TABLE users` while the old `users` still existed —
+Postgres rejects it. The end state was valid; the path to it was not. Same
+shape on columns: rename `email` away, add a new `email`, crash.
+
+Fixing that exposed a second problem *within* the rename phase. Swapping two
+names (`a → b`, `b → a`) has no valid two-statement ordering: whichever runs
+first creates a duplicate. It needs a temporary: `a → __tmp_1`, `b → a`,
+`__tmp_1 → b`.
+
+**Reasoning:** Both are ordinary refactors, not edge cases — reusing a freed
+name is what people do when repurposing a concept, and swapping two names
+happens whenever someone decides they were the wrong way round. A tool that
+produces a correct final schema and an unrunnable migration has failed at the
+only thing the user actually wanted.
+
+**The uncomfortable part:** D17 argued *against* topological sorting, on the
+grounds that foreign key cycles have no valid ordering. That reasoning was
+right for foreign keys and wrong as a general principle. Renames need a
+topological sort *with cycle breaking* — cycles here are resolvable, via a
+temporary name, whereas foreign key cycles are resolvable via phases. Two
+superficially similar problems, two different correct tools. I generalised
+one insight too far and it cost me a bug.
+
+### D21. `alter_constraint` and `alter_index`, or the divergence conflicts are fiction
+
+**Chose:** Add ID-preserving `alter_constraint` and `alter_index` operations.
+
+**The bug:** The operation list offered only add and drop for constraints and
+indexes. So "change the primary key" could only be drop-plus-add, which mints
+a **new id** — meaning the diff reported an unrelated deletion and creation,
+never `constraint_changed`. Two branches each adjusting the same primary key
+would merge without conflict and produce a table with two primary keys.
+
+Meanwhile the spec listed `constraint_changed`, `index_changed`,
+`constraint_divergence` and `index_divergence`. All four were **unreachable
+in practice** — types described in the model that the product could not
+produce.
+
+**Reasoning:** This is D3's rename-versus-drop-plus-add failure exactly, one
+entity kind over. I solved identity for columns, wrote a taxonomy that assumed
+constraints had it too, and never checked whether any operation could actually
+produce that state. An unreachable conflict class is worse than a missing one:
+the tests pass, the taxonomy table looks complete, and the gap is invisible
+until a user hits it.
+
+**Cut:** `kind` and `tableId` are not patchable. Changing either means it is a
+different rule — that is drop plus add, honestly.
+
+### D22. `CHECK` predicates are structured, not free text
+
+**Chose:** `Expression = { template: string; columnIds: Id[] }` with numbered
+placeholders. Names are substituted at render time. Partial index predicates
+use the same type.
+
+**Considered:** Parsing the SQL expression to find referenced columns; leaving
+predicates as opaque text and documenting the limitation; dropping `CHECK`
+support entirely.
+
+**The bug:** `CHECK (age > 0)` stored as the string `"age > 0"` references a
+column *by name, in text*, which nothing can see. Drop `age` and the
+constraint dangles undetected. Rename `age` and the predicate silently still
+says `age`. The single rule this entire design rests on — never match entities
+by name — was violated by the one field whose whole purpose is to express a
+rule about columns.
+
+**Reasoning:** Parsing means the SQL parser cut in D14, for one field. But the
+editor already knows which columns the user selected, so the information is
+free at authoring time — store IDs, keep placeholders, render names at the
+end. Renames propagate automatically and `validate` checks `columnIds` exactly
+as it does everywhere else.
+
+**Accepted tradeoff:** predicates are composed through the editor rather than
+typed as arbitrary SQL. That is a real limitation. It is the right one: a rule
+the tool cannot read is a rule it cannot protect, and a `CHECK` that silently
+breaks is worse than a `CHECK` you could not express.
+
+### D23. The validator checks what Postgres would reject
+
+**Chose:** Extend the hazard list with `multiple_primary_keys`,
+`default_type_mismatch`, `duplicate_constraint_name`, `duplicate_index_name`,
+`foreign_key_target_not_unique`, `foreign_key_type_mismatch`, and
+`foreign_key_arity_mismatch`.
+
+**The bug:** The original list only found dangling references. It would happily
+approve a schema with two primary keys on one table, a default of `'hello'` on
+an integer column, two indexes sharing a name, or a foreign key pointing at a
+non-unique column — every one of which Postgres rejects outright.
+
+**Reasoning:** A validator that approves a migration the database then refuses
+is worse than no validator, because the user trusted it and stopped checking.
+The rule adopted: **if Postgres would reject the DDL, `validate` catches it
+first.** That is a clear, testable line, and it is the honest scope for
+something presented to a user as a safety check.
+
+**Not claimed:** this is still not a Postgres type system. It is a bounded
+list, and the boundary is now written down rather than implied.
+
+### D24. Hazard attribution happens in merge, not in validate
+
+**Chose:** `validate(schema) => Hazard[]` stays pure and anonymous. Merge wraps
+its output as `AttributedHazard` by correlating each hazard's entity IDs
+against both branches' change lists.
+
+**The bug:** The merge screen promised "Ana deleted this, Ben added a rule —
+that is why it is broken." `validate`'s signature is `(schema) => Hazard[]`.
+It sees a final state and has no idea who produced any part of it. The UI was
+promising something the layer beneath it structurally could not deliver.
+
+**Reasoning:** Merge *does* hold `diff(base, ours)` and `diff(base, theirs)`,
+so attribution belongs there. Pushing provenance down into `validate` would
+mean threading authorship through a pure function that also runs on ordinary
+commits where no `ours`/`theirs` exists.
+
+**Stated honestly in the product:** this is correlation, not causation. It
+reports who touched the entities involved, which is not proof of blame. The UI
+says "touched", never "caused", and falls back to stating the defect alone
+when only one side correlates or the hazard predates the merge. Better to say
+less than to confidently name the wrong colleague.
+
+### D25. What this review changed about how I work on this
+
+The seven findings share one shape: a decision that was correct for the entity
+kind I had in front of me, applied by assumption to entity kinds I had not
+re-examined. Identity for columns but not constraints (D21). Name-free
+references everywhere except predicates (D22). Conflict detection between peers
+but not across containment (D19). Cycle reasoning correct for foreign keys and
+overgeneralised to renames (D20).
+
+The countermeasure is in the plan rather than in prose: every one of the seven
+is now a named regression test, and the phase ordering, rename cycles, and
+containment conflicts each get their own failing test written *before* the
+implementation. The design being wrong is cheap at this stage. It would not
+have been cheap on day 4.
+
+---
+
 ## Log
 
 Entries below are added as the build progresses.
