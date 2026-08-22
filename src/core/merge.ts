@@ -34,6 +34,29 @@ export interface Conflict {
   theirs: unknown;
   /** Plain language, naming both sides. Rendered directly in the UI. */
   description: string;
+  /**
+   * `name_collision` only: every entity sharing the disputed name, so a
+   * resolution can target ANY of them — see the note on `NameCollisionValue`
+   * below for why "take ours / take theirs" doesn't apply to this class.
+   */
+  collisionMembers?: { id: Id; name: string; side: 'ours' | 'theirs' | null }[];
+}
+
+/**
+ * `custom` value for a `name_collision` resolution: rename ONE specific
+ * colliding entity to a new name.
+ *
+ * Every other conflict class has a natural "ours" and "theirs" value to pick
+ * between. A name collision doesn't: `Conflict.ours` and `Conflict.theirs`
+ * are the SAME string — that's the whole problem — so there is nothing to
+ * choose between. The only real resolution is picking ONE of the colliding
+ * entities and giving it a name the other one isn't using, which needs to
+ * name *which* entity. `collisionMembers` on the conflict supplies the
+ * choices; this is how the UI answers.
+ */
+export interface NameCollisionValue {
+  entityId: Id;
+  name: string;
 }
 
 export type Resolution =
@@ -133,13 +156,55 @@ export function threeWayMerge(
     if (chosen) applied.push(chosen);
   }
 
-  const schema = applyChanges(base, applied);
+  const merged = applyChanges(base, applied);
 
-  // Pass 3 — two branches independently landing on the same name.
-  conflicts.push(...findNameCollisions(schema, oursChanges, theirsChanges, labels));
+  // Pass 3 — two branches independently landing on the same name. Detected
+  // AFTER Pass 1/2 apply, because the collision only exists in the merged
+  // result — neither branch's own schema has it.
+  //
+  // Unlike every earlier pass, there is no "ours" or "theirs" value to pick
+  // between here (Conflict.ours === Conflict.theirs — that IS the problem).
+  // The only real resolution is renaming ONE of the colliding entities, so a
+  // `custom` resolution targets a specific entity by id (NameCollisionValue)
+  // rather than choosing a side. Applying it and re-detecting from scratch —
+  // rather than trying to selectively clear just the one conflict — is what
+  // stays correct if the rename happens to collide with something else.
+  const firstPass = findNameCollisions(merged, oursChanges, theirsChanges, labels);
+  let schema = merged;
+  for (const collision of firstPass) {
+    const resolution = byResolution.get(collision.id);
+    if (resolution?.choice === 'custom' && isNameCollisionValue(resolution.value)) {
+      schema = renameCollidingEntity(schema, collision, resolution.value);
+    }
+  }
+  const collisions = schema === merged ? firstPass : findNameCollisions(schema, oursChanges, theirsChanges, labels);
+  conflicts.push(...collisions);
 
   const hazards = validate(schema).map((h) => attribute(h, schema, oursChanges, theirsChanges));
   return { schema, conflicts, hazards, applied };
+}
+
+function isNameCollisionValue(value: unknown): value is NameCollisionValue {
+  return (
+    typeof value === 'object' && value !== null &&
+    typeof (value as Record<string, unknown>).entityId === 'string' &&
+    typeof (value as Record<string, unknown>).name === 'string'
+  );
+}
+
+/** Rename whichever colliding entity the resolution named. A no-op if the id isn't actually one of this collision's members. */
+function renameCollidingEntity(schema: Schema, collision: Conflict, value: NameCollisionValue): Schema {
+  if (!collision.collisionMembers?.some((m) => m.id === value.entityId)) return schema;
+  if (collision.entity.kind === 'table') {
+    return { ...schema, tables: schema.tables.map((t) => (t.id === value.entityId ? { ...t, name: value.name } : t)) };
+  }
+  return {
+    ...schema,
+    tables: schema.tables.map((t) => ({
+      ...t,
+      columns: t.columns.map((c) => (c.id === value.entityId ? { ...c, name: value.name } : c)),
+    })),
+  };
 }
 
 /* ------------------------------------------------- name collisions (§7.4) */
@@ -197,6 +262,7 @@ function findNameCollisions(
         description:
           `${labels.ours} and ${labels.theirs} each produced a ${kind} named \`${name}\`${scope}. ` +
           `Pick a different name for one of them.`,
+        collisionMembers: members.map((m) => ({ id: m.id, name: m.name, side: sideOf(m.id) })),
       });
     }
   };

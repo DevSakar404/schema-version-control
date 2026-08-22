@@ -84,6 +84,68 @@ describe('name collision (design.md §7.4)', () => {
     const c = r.conflicts.find((x) => x.class === 'name_collision')!;
     expect(c.description).toContain('Pick a different name');
   });
+
+  it('exposes both colliding entities, attributed to a side, so the UI knows what it can rename', () => {
+    const r = merge(
+      branch([{ kind: 'rename_column', columnId: 'c2', name: 'contact' }]),
+      branch([{ kind: 'rename_column', columnId: 'c3', name: 'contact' }]),
+    );
+    const c = r.conflicts.find((x) => x.class === 'name_collision')!;
+    expect(c.collisionMembers).toEqual(
+      expect.arrayContaining([
+        { id: 'c2', name: 'contact', side: 'ours' },
+        { id: 'c3', name: 'contact', side: 'theirs' },
+      ]),
+    );
+  });
+
+  it('a custom resolution renames ONE colliding entity and clears the conflict', () => {
+    // The core gap this closes: findNameCollisions ran after resolutions
+    // were applied, so there was structurally no way to resolve one. This is
+    // the first assertion that a name collision can actually be resolved.
+    const r = threeWayMerge(
+      base(),
+      branch([{ kind: 'rename_column', columnId: 'c2', name: 'contact' }]),
+      branch([{ kind: 'rename_column', columnId: 'c3', name: 'contact' }]),
+      [{ conflictId: 'c2+c3:name_collision', choice: 'custom', value: { entityId: 'c3', name: 'contact_alt' } }],
+      { oursLabel: 'ana', theirsLabel: 'ben' },
+    );
+    expect(r.conflicts.map((c) => c.class)).not.toContain('name_collision');
+    const table = r.schema.tables[0]!;
+    expect(table.columns.find((c) => c.id === 'c2')!.name).toBe('contact');
+    expect(table.columns.find((c) => c.id === 'c3')!.name).toBe('contact_alt');
+  });
+
+  it('a resolution naming an id NOT in this collision is a no-op — the conflict stays open', () => {
+    const r = threeWayMerge(
+      base(),
+      branch([{ kind: 'rename_column', columnId: 'c2', name: 'contact' }]),
+      branch([{ kind: 'rename_column', columnId: 'c3', name: 'contact' }]),
+      [{ conflictId: 'c2+c3:name_collision', choice: 'custom', value: { entityId: 'not-a-member', name: 'whatever' } }],
+      { oursLabel: 'ana', theirsLabel: 'ben' },
+    );
+    expect(r.conflicts.map((c) => c.class)).toContain('name_collision');
+  });
+
+  it('resolving onto a name a THIRD, untouched column already holds surfaces as a duplicate_name HAZARD, not a re-flagged conflict', () => {
+    // "existing" is inherited unchanged by both branches — neither branch
+    // touched it, so by the same rule that makes a solo collision a hazard
+    // rather than a conflict (§7.4), a collision the RESOLUTION itself
+    // introduces against untouched state belongs to validate(), not to a
+    // re-detected name_collision. It IS still caught — just one layer over.
+    const withThird = branch([
+      { kind: 'add_column', tableId: 't1', name: 'existing', type: { kind: 'text' }, nullable: true, default: null },
+    ], 'z');
+    const r = threeWayMerge(
+      withThird,
+      applyOps(withThird, [{ kind: 'rename_column', columnId: 'c2', name: 'contact' }], counterIdGen('a')),
+      applyOps(withThird, [{ kind: 'rename_column', columnId: 'c3', name: 'contact' }], counterIdGen('b')),
+      [{ conflictId: 'c2+c3:name_collision', choice: 'custom', value: { entityId: 'c3', name: 'existing' } }],
+      { oursLabel: 'ana', theirsLabel: 'ben' },
+    );
+    expect(r.conflicts.some((c) => c.class === 'name_collision')).toBe(false);
+    expect(r.hazards.map((h) => h.class)).toContain('duplicate_name');
+  });
 });
 
 describe('hazards through merge — the zero-conflict broken schema (design.md §8)', () => {
