@@ -118,18 +118,22 @@ export function threeWayMerge(
   const claimed = new Set<string>();
   for (const group of groups) {
     claimed.add(group.deletionKey);
+    for (const key of group.deletionCascadeKeys) claimed.add(key);
     for (const key of group.counterpartKeys) claimed.add(key);
 
     const resolution = byResolution.get(group.conflict.id);
     if (!resolution) {
       // Unresolved: keep the entity rather than destroy it. The merge is
       // provisional until a human decides, and the recoverable choice is the
-      // one that does not discard a colleague's work.
+      // one that does not discard a colleague's work. Keeping it means
+      // keeping ALL of it — the cascade stays suppressed, not just the
+      // top-level deletion, or "kept" would silently mean "kept, minus its
+      // primary key and foreign keys."
       conflicts.push(group.conflict);
       applied.push(...group.counterparts);
       continue;
     }
-    if (resolution.choice === 'ours') applied.push(group.deletion);
+    if (resolution.choice === 'ours') applied.push(group.deletion, ...group.deletionCascade);
     else applied.push(...group.counterparts);
   }
 
@@ -317,6 +321,17 @@ interface ContainmentGroup {
   conflict: Conflict;
   deletionKey: string;
   deletion: Change;
+  /**
+   * Every OTHER change on the deleting side whose subject falls inside the
+   * same closure — the constraint_dropped / index_dropped entries that
+   * drop_table's or drop_column's own cascade (ops.ts) produced alongside
+   * the top-level deletion. These must be claimed and resolved as ONE unit
+   * with `deletion`: if the conflict resolves to "keep", none of them may
+   * apply either, or a kept table loses its primary key and foreign keys
+   * while nobody ever agreed to that.
+   */
+  deletionCascade: Change[];
+  deletionCascadeKeys: string[];
   counterparts: Change[];
   counterpartKeys: string[];
 }
@@ -384,6 +399,22 @@ function findContainmentConflicts(
       }
       if (!counterparts.length) continue;
 
+      // The SAME side's own cascade: dropping `payments` also produces
+      // separate constraint_dropped / index_dropped changes for
+      // payments_pkey, its foreign keys, its indexes — each its own
+      // (entity, attribute) key in `deleting`. Left unclaimed, Pass 2 would
+      // see each as an ordinary one-sided change and apply it independently
+      // of whether the table itself ends up dropped or kept.
+      const deletionCascadeKeys: string[] = [];
+      const deletionCascade: Change[] = [];
+      for (const [key, change] of deleting) {
+        if (key === deletionKey) continue;
+        if (closure.has(subjectOf(change))) {
+          deletionCascadeKeys.push(key);
+          deletionCascade.push(change);
+        }
+      }
+
       const entity = entityOf(deletion, base);
       const deletingLabel = deletingSide === 'ours' ? labels.ours : labels.theirs;
       const otherLabel = deletingSide === 'ours' ? labels.theirs : labels.ours;
@@ -404,6 +435,8 @@ function findContainmentConflicts(
         },
         deletionKey,
         deletion,
+        deletionCascade,
+        deletionCascadeKeys,
         counterparts,
         counterpartKeys,
       });

@@ -153,3 +153,34 @@ describe('resolution', () => {
     expect(findTable(r.schema, 't1')!.columns.map((c) => c.name)).toContain('nickname');
   });
 });
+
+describe('an unresolved delete_modify keeps the ENTIRE entity, not a stripped shell', () => {
+  // The bug: dropping `users` cascades to constraint_dropped/index_dropped
+  // for users_pkey and idx_email as SEPARATE (entity, attribute) keys on the
+  // deleting side. Left unclaimed, Pass 2 saw each as an ordinary one-sided
+  // change and applied it independently of the table's own fate — so
+  // "unresolved, keep the table" silently meant "keep a table with no
+  // primary key and no index," which nobody ever agreed to.
+  it('keeps the primary key and the index when the table survives unresolved', () => {
+    const r = merge(
+      branch([{ kind: 'drop_table', tableId: 't1' }]),
+      branch([{ kind: 'add_column', tableId: 't1', name: 'nickname', type: { kind: 'text' }, nullable: true, default: null }]),
+    );
+    expect(findTable(r.schema, 't1')).toBeDefined();
+    expect(r.schema.constraints.find((c) => c.id === 'k1')).toBeDefined();
+    expect(r.schema.indexes.find((i) => i.id === 'i1')).toBeDefined();
+    expect(r.schema.tables[0]!.columns.map((c) => c.name)).toContain('nickname');
+  });
+
+  it('resolving to "ours" (drop wins) removes the table AND everything in its cascade', () => {
+    const r = threeWayMerge(
+      base(),
+      branch([{ kind: 'drop_table', tableId: 't1' }]),
+      branch([{ kind: 'add_column', tableId: 't1', name: 'nickname', type: { kind: 'text' }, nullable: true, default: null }]),
+      [{ conflictId: 't1:__exists', choice: 'ours' }],
+    );
+    expect(findTable(r.schema, 't1')).toBeUndefined();
+    expect(r.schema.constraints).toEqual([]);
+    expect(r.schema.indexes).toEqual([]);
+  });
+});
