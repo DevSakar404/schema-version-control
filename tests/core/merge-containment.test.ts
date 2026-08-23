@@ -184,3 +184,19 @@ describe('an unresolved delete_modify keeps the ENTIRE entity, not a stripped sh
     expect(r.schema.indexes).toEqual([]);
   });
 });
+
+describe('the same fix, checked against a COLUMN deletion rather than a table', () => {
+  // D38's fix is written generically over closureOf, which already handles
+  // columns as well as tables — so this ought to already work. Confirmed,
+  // not assumed: an index on a column survives when a delete_modify on that
+  // column is left unresolved, the same way a table's primary key does.
+  it('keeps an index on the column when the column survives unresolved', () => {
+    const r = merge(
+      branch([{ kind: 'drop_column', columnId: 'c2' }]),
+      branch([{ kind: 'retype_column', columnId: 'c2', type: { kind: 'text' } }]),
+    );
+    expect(r.conflicts.map((c) => c.class)).toEqual(['delete_modify']);
+    expect(findColumn(r.schema, 'c2')).toBeDefined();
+    expect(r.schema.indexes.find((i) => i.id === 'i1')).toBeDefined();
+  });
+});

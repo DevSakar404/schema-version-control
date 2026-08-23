@@ -722,6 +722,272 @@ not the UX effort.
 
 ---
 
+## Day 4-5 — Tasks 17-20: what live use caught that inspection didn't
+
+Every entry below was found by actually running the feature — clicking
+through the UI, seeding real data, driving a real merge — not by reading the
+code back. That's not incidental to this section; it's the reason it exists.
+Unit tests passed the whole time in every case. The pattern repeats often
+enough across five tasks that it's worth naming once, here, instead of once
+per entry: **a green suite proves the cases you thought to write are
+correct. It says nothing about the case you didn't think to write.** The
+countermeasure isn't more tests written from imagination — it's actually
+using the thing.
+
+### D32. Creating ops accept a pre-supplied id (Task 17)
+
+**Chose:** Every op that creates an entity takes an optional `id`; when
+present it's used verbatim instead of calling `mintId()`.
+
+**The bug:** The schema editor computes a client-side preview with one id
+generator, then sends the same ops to the server, which replays them with a
+*different* generator. Add a column, then add a `CHECK` on that column in
+the same batch, and the CHECK's `Expression.columnIds` carries the client's
+id for the new column — which means nothing once the server independently
+mints its own. The server correctly reported "references a column that no
+longer exists," because under its replay, that id genuinely never existed.
+
+**Reasoning:** This is D3's identity problem one layer up: solved for
+entities that exist in a committed schema, not for entities created and
+referenced within a single uncommitted batch. The fix is that only one side
+ever mints an id for a given entity — the UI generates it at the moment it
+builds the op and embeds it; the server's replay reuses it. `mintId` stays
+the source of truth for every call site that doesn't pre-supply one.
+
+### D33. describeChange resolves column names instead of printing raw ids (Task 18)
+
+**Chose:** `describeChange` takes an optional `schema` and resolves a
+column's current name through it for the three kinds that carry only a
+`columnId` — falls back to the id when no schema is given, so all prior
+single-argument call sites are unaffected.
+
+**The bug:** "Changed type of `c2ab91f...`" — and the nullability/default
+variants didn't even get that far: "Made column NOT NULL" didn't say which
+column at all. Every existing test checked `.kind`/`.class`, never the full
+string, for these three kinds — the gap was invisible until there was a
+rendered row to read.
+
+**Reasoning:** The same defect existed in `merge.ts`'s conflict descriptions
+(`concurrent_retype` etc.) one layer away from where it was noticed —
+`describeChange` is shared, so fixing it once fixed both surfaces.
+
+### D34. name_collision conflicts become resolvable (Task 19)
+
+**Chose:** `Conflict` gains an optional `collisionMembers` (id, name, side);
+a `custom` resolution for this class carries `{ entityId, name }` and
+targets one specific colliding entity, since the class has no "ours" vs
+"theirs" to choose between — both sides produced the *same* name, which is
+the whole problem.
+
+**The bug:** `findNameCollisions` ran as its own pass **after** resolutions
+were already applied, and its output was appended to `conflicts`
+unconditionally. There was no code path that ever consulted a resolution for
+this class — the merge screen was about to promise a resolution flow the
+core structurally could not deliver.
+
+**Reasoning:** Pass 3 now applies any matching resolution (a targeted
+rename) and then **re-runs detection from scratch** on the result, rather
+than trying to selectively clear the one conflict. Re-running is what stays
+correct when the rename happens to collide with something else — verified
+directly: resolving onto a name a third, untouched column already holds
+does not get reported as fixed. It correctly becomes a `duplicate_name`
+hazard instead, the same "solo contribution is a hazard, not a conflict"
+rule already governing the original detection.
+
+### D35. eslint-plugin-react-hooks, three UI tasks late
+
+**Chose:** Installed and wired in during Task 19, after writing hooks freely
+across Tasks 16-18 with no lint coverage for them at all.
+
+**Reasoning:** Its first run found a real (if latent) Rules-of-Hooks
+violation in `ConflictCard`'s custom-input component — a `useState` called
+after two early returns. Harmless today only because the component's
+`attribute` prop never changes across a mounted instance's lifetime; a
+future edit that violated that assumption would have broken silently. There
+is no argument for a Next.js project *not* having this rule from Task 1; the
+honest accounting is that it was missed, not that it was deferred on
+purpose.
+
+### D36. The "Write my own" input starts empty, never pre-filled
+
+**Chose:** The custom-resolution text input in `ConflictCard` shows the
+current value as a *placeholder*, never as the field's starting value.
+
+**The bug, found by literally doing what a user would do:** pre-filling
+with `conflict.ours` and clicking into the field to edit it produced
+`contact_emprimary_emailail` instead of `primary_email`. A click into
+existing text places a cursor mid-string, not a selection — typing
+*inserts*, it doesn't replace. Obvious once seen; invisible from reading the
+component, which is why it survived a clean typecheck and a full green test
+run.
+
+**Reasoning:** A placeholder communicates the same "here's the current
+value" information with none of the interaction risk. The fix cost four
+lines. Finding it cost actually typing into the field the way a reviewer
+would.
+
+### D37. Seed scenario one, rebuilt to match what the system actually does
+
+**Chose:** The rename conflict scenario has both branches rename `email`
+to *different* names (a genuine `concurrent_rename`), with an independent
+retype riding along on one branch, unconflicted.
+
+**Reasoning:** The implementation plan's own one-line description of this
+scenario read as if a rename-plus-retype pair on the same column **were**
+the conflict. It isn't, by design — Task 7 exists specifically to prove that
+pairing merges clean, because the two edits touch different attributes
+(§6.1). Building the scenario as originally worded would have contradicted
+five tasks' worth of verified, tested behavior, or silently shipped a demo
+that lied about what the tool does. Fixed the scenario, not the engine —
+the engine was right.
+
+### D38. Unresolved delete_modify no longer strips the kept entity's keys
+
+**Chose:** `findContainmentConflicts` now also collects every OTHER change
+on the *deleting* side whose subject falls in the same closure — the
+`constraint_dropped` / `index_dropped` entries `drop_table`'s own cascade
+produces alongside the top-level deletion — and claims them as one unit
+with the deletion itself.
+
+**The bug, the most consequential one this project has shipped:** "leave a
+delete_modify conflict unresolved, keep the whole entity" is a documented
+design promise (§7.2: "the recoverable choice is the one that does not
+discard a colleague's work"). It only kept a stripped shell. `drop_table`
+cascades to separate `constraint_dropped`/`index_dropped` changes for the
+table's primary key, foreign keys, and indexes — each its own
+`(entity, attribute)` key on the deleting side. The original containment fix
+(D19) only ever claimed the table's own key plus the *other* side's
+counterpart keys; it never claimed the deleting side's own cascade. Left
+unclaimed, those cascade drops looked like ordinary one-sided changes to
+Pass 2 and applied independently of whether the table itself ended up
+dropped or kept.
+
+**Why 280 prior tests missed it:** none of them built a table with both a
+primary key *and* a foreign key pointing at it, then left a delete_modify
+conflict on that table unresolved. The seeded demo's `payments` table has
+both, by design, and the first time I actually clicked through the
+containment scenario in a browser, a `no_primary_key` hazard appeared on a
+table nobody had touched. That was the whole tell.
+
+**How to apply:** this is the clearest example in the project of why manual
+verification is a review gate, not a formality. A hand-built test fixture
+only exercises the shapes someone thought to build. A seeded, realistic
+schema clicked through in a real UI exercises the shapes that actually
+occur — this is precisely why design.md's own testing section separates
+example tests from live verification rather than treating the first as a
+substitute for the second.
+
+### D39. Any branch can be compared or merged against any other, not only `main`
+
+**Chose:** `BranchActions` adds a "vs" picker to each branch row so Compare
+and Merge can target any other branch, defaulting to `main`.
+
+**The bug:** The three seeded scenarios are pairs of sibling branches that
+only conflict against *each other* — merging either one into an untouched
+`main` alone is a trivial clean fast-forward. The branch list's Compare/
+Merge links were hardcoded to `main`, so a reviewer clicking through from
+the list would never see the demo's actual point, no matter which branch
+they picked.
+
+**Reasoning:** The fix is general, not a demo-specific workaround: "merge
+this branch into main" is the common case, not the only one a real team
+hits. Two people picking up each other's in-progress work is ordinary git
+usage the original design simply never accounted for. Considered
+pre-merging one scenario branch into `main` during seeding instead — cut,
+because it doesn't scale past one scenario (three independent scenarios
+cannot all pre-advance the same `main` without interacting with each
+other), and because it would have hidden a real product gap behind a seed
+workaround instead of fixing it.
+
+### D40. Branch names in the list link to the schema editor
+
+**Chose:** Branch names in the branch list are links to `/p/[id]/b/[id]`.
+
+**Reasoning:** Task 17 built the schema editor; nothing built before or
+after it ever linked there from the branch list, which was written in Task
+16 before the editor existed. Not a bug in the sense of wrong behavior —
+the page simply had no way in. Found while adding the reset-demo button to
+the same page and noticing there was no way to reach the thing the
+"Diverged" column implies exists.
+
+---
+
+---
+
+## Day 5 — what surprised me
+
+**The pattern, not the instances.** D32 through D40 read like eight
+unrelated bug reports. They aren't. Every one of them was invisible to a
+full green test suite and visible within about a minute of actually clicking
+through the feature — the id-divergence bug (D32), the raw-id descriptions
+(D33), the unresolvable name collision (D34), a Rules-of-Hooks violation
+with no lint rule to catch it (D35), a text field that corrupts input on
+the first edit (D36), a scenario that contradicted the engine's own tested
+behavior (D37), and the most serious one, a delete_modify resolution that
+silently discarded a kept table's keys (D38) — none of them showed up until
+there was a real UI, a real database, and a real click. I went into Day 4
+expecting the UI tasks to be the *safe*, mechanical part of the build,
+after the "hard" work of the merge core was done and tested. That
+expectation was wrong, and it was wrong in a specific, informative way: a
+pure function's tests only cover the inputs someone thought to construct.
+A UI wired to a real database and clicked through by an actual sequence of
+actions produces inputs nobody constructed on purpose — batched ops that
+reference each other, a delete left unresolved on a table that happens to
+have both a primary key and a foreign key, a click landing mid-string in a
+pre-filled field. If I built this again, verification-by-actual-use would
+be scheduled *throughout*, not concentrated at the end of each task as a
+final check — it isn't a formality that confirms the code works, it's where
+a real fraction of the remaining bugs actually live.
+
+**The plan is not a contract.** D37 is the cleanest example: the
+implementation plan, written on Day 0 before a line of `core/` existed,
+described a demo scenario in terms that quietly contradicted what Task 7
+later proved and tested. Nobody caught it at planning time because there
+was nothing to contradict yet. The lesson isn't "plan better" — the plan
+was reasonable given what was known when it was written. The lesson is that
+a plan's job is to be cheaply wrong early and get corrected by contact with
+what actually gets built, and the record of those corrections (D17, D19-D25
+in design review; D32-D40 here) is more honest, and more useful to a future
+reader, than a plan that happened to be right the first time would have
+been.
+
+**What shortcuts were actually taken, and what they'd cost to undo.**
+
+- The three manual QA scripts written and deleted during Tasks 16-19
+  (seed-and-inspect-by-hand) were the right call under time pressure —
+  faster than writing a Playwright suite for one-off visual checks — but
+  they mean the *browser* behavior of the editor and merge screens has no
+  automated regression coverage, only the API and core layers do. Undoing
+  this means a thin Playwright smoke suite over the four screens; a day of
+  work, not started because the core and API layers carry the actual risk
+  in this project and Playwright's return is lower here than it would be on
+  a UI-heavy product.
+- `renderExpression`'s literal-detection in `default_type_mismatch` (D23)
+  is bounded pattern matching, not a real SQL literal grammar. It is
+  correctly documented as such in design.md and will misjudge an unusual
+  literal it hasn't seen. Undoing this means embedding a real SQL value
+  grammar, which is disproportionate to what a schema-diff tool needs.
+- No authentication, exactly as scoped in D2. Worth restating here because
+  it is the single largest gap between this build and something
+  deployable to a real team, and it was a deliberate, correct choice for a
+  5-day build — not an oversight discovered late.
+
+**What's next, honestly.** Deploy to Vercel and a live click-through of all
+three seeded scenarios in production is the one remaining step (Task 21,
+in progress as this section is written) — everything up to it is built,
+tested, and verified locally against a real Supabase instance. While writing
+this section I went back and specifically checked the one thing that looked
+like it might be a sibling of D38's bug: the fix there is written generically
+over `closureOf`, which already handles column deletions the same way it
+handles table deletions, so a `drop_column` cascade *should* already be
+covered by the same code path. Checked rather than assumed — it is; a
+regression test for the column case now sits next to the two table-case
+tests. If there were a Day 6, the remaining item is a Playwright smoke suite
+over the four screens (see above) — the browser-level gap, not a correctness
+one.
+
+---
+
 ## Log
 
 Entries below are added as the build progresses.
