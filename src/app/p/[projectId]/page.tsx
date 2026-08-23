@@ -3,6 +3,9 @@ import { notFound } from 'next/navigation';
 import { getProjectOverview } from '@/server/branches-service';
 import { NotFound } from '@/server/http';
 import { NewBranchForm } from '@/components/NewBranchForm';
+import { SeedButton } from '@/components/SeedButton';
+import { BranchActions } from '@/components/BranchActions';
+import { DEMO_PROJECT_ID } from '@/seed/demo';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,7 +36,10 @@ export default async function ProjectPage({ params }: Props) {
       <p className="text-dim" style={{ marginBottom: '0.25rem' }}>
         <Link href="/">Projects</Link>
       </p>
-      <h1>{project.name}</h1>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+        <h1 style={{ margin: 0 }}>{project.name}</h1>
+        {project.id === DEMO_PROJECT_ID && <SeedButton label="Reset demo" />}
+      </div>
 
       <NewBranchForm
         projectId={project.id}
@@ -53,9 +59,9 @@ export default async function ProjectPage({ params }: Props) {
           {ordered.map((b) => (
             <tr key={b.id} style={{ borderBottom: '1px solid var(--border)' }}>
               <td style={{ padding: '0.6rem 0.25rem' }}>
-                <span className="mono" style={{ fontWeight: b.isDefault ? 700 : 500 }}>
+                <Link href={`/p/${project.id}/b/${b.id}`} className="mono" style={{ fontWeight: b.isDefault ? 700 : 500 }}>
                   {b.name}
-                </span>
+                </Link>
                 {b.isDefault && (
                   <span className="pill" style={{ marginLeft: '0.5rem', background: 'var(--border)' }}>
                     default
@@ -81,18 +87,12 @@ export default async function ProjectPage({ params }: Props) {
               </td>
               <td style={{ padding: '0.6rem 0.25rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
                 {!b.isDefault && main && (
-                  <>
-                    <Link
-                      className="btn"
-                      href={`/p/${project.id}/compare?base=${main.id}&head=${b.id}`}
-                      style={{ marginRight: '0.4rem' }}
-                    >
-                      Compare
-                    </Link>
-                    <Link className="btn btn-primary" href={`/p/${project.id}/merge?target=${main.id}&source=${b.id}`}>
-                      Merge
-                    </Link>
-                  </>
+                  <BranchActions
+                    projectId={project.id}
+                    branch={{ id: b.id, name: b.name }}
+                    others={branches.filter((other) => other.id !== b.id).map((o) => ({ id: o.id, name: o.name }))}
+                    defaultAgainstId={main.id}
+                  />
                 )}
               </td>
             </tr>
