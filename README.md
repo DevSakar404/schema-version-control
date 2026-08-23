@@ -14,27 +14,88 @@ Row data is out of scope. The artifact under version control is the schema.
 
 ## Status
 
-**Design complete and reviewed. Implementation not started.**
+**Built. 283 tests passing.**
 
-This repository currently contains the design, the decision log, and the
-task-by-task build plan. There is no application code yet, so there is nothing
-to install or run. Setup and demo instructions land with Tasks 1 and 21 of the
-plan respectively.
+**Live:** _[deploy URL — fill in after `vercel --prod`]_
 
 | Document | What it covers |
 | --- | --- |
-| [decisions.md](decisions.md) | Every real call made, with the alternatives rejected and the tradeoffs accepted |
+| [decisions.md](decisions.md) | Every real call made, with the alternatives rejected and the tradeoffs accepted — 40 entries, running through the Day 5 reflection |
 | [design.md](design.md) | The specification — data model, algorithms, taxonomies, API, screens, testing |
 | [docs/implementation-plan.md](docs/implementation-plan.md) | 21 tasks over 5 days, each with file paths, interface contracts, and test assertions |
 
-The design was then reviewed against inputs an ordinary user could produce,
-and **seven cases came back wrong** — three outright bugs in a spec already
-called finished, two conflict types the product could never actually produce,
-and two gaps in what the validator and the UI honestly knew. They are recorded
-as D19–D25 rather than quietly corrected, because the pattern connecting them
-is the useful part: every one was a decision that was right for the entity kind
-in front of me and wrong once assumed to generalise. Each is now a named
-regression test, mapped to its task in the plan.
+The design was reviewed against inputs an ordinary user could produce before
+any code existed, and seven cases came back wrong (D19–D25). Building the UI
+on top of the (by then well-tested) core surfaced a second wave — eight more
+real bugs, every one of them invisible to a full green test suite and found
+within about a minute of actually clicking through the feature (D32–D40). The
+"Day 5 — what surprised me" section at the end of `decisions.md` names the
+pattern connecting all of them, rather than leaving it as eight disconnected
+bug reports.
+
+---
+
+## Setup
+
+```bash
+git clone <this-repo-url>
+cd zamp-schema-version
+npm install
+cp .env.example .env
+```
+
+Create a [Supabase](https://supabase.com) project (free tier), then from
+**Connect → Connection string → URI**, take the **Transaction pooler** entry
+(not the direct connection — it's IPv6-only and Vercel can't route it) and
+paste it into `.env` as `DATABASE_URL`. Then:
+
+```bash
+npm run db:migrate   # creates projects / commits / branches
+npm run dev           # http://localhost:3000
+```
+
+The home page seeds itself on first visit — click **Seed the demo** and a
+realistic six-table schema with three diverged branch pairs appears
+immediately. A **Reset demo** button on the project page restores it to that
+same state at any point, so nothing you do while exploring the editor can
+break the demo permanently.
+
+**Tests:**
+
+```bash
+npm test          # 283 tests. Core suite needs no database at all.
+npm run typecheck
+npm run lint
+```
+
+The database-backed tests (`tests/db/`) skip themselves automatically when
+`DATABASE_URL` is unset, so `npm test` runs clean on a machine with no
+Supabase project configured — only the pure `src/core/` suite runs, which is
+most of the 283.
+
+---
+
+## A guided walkthrough
+
+Three scenarios are planted on first seed, each a merge away from something a
+naive schema-diff tool gets wrong. From the project page, use the **vs**
+picker on a branch row to compare it against its sibling (not `main` — these
+three pairs only conflict against *each other*):
+
+1. **`feature/rename-contact-email` vs `feature/normalize-email`** — a real
+   conflict: both branches rename `users.email`, to different names. Resolve
+   it (take either side, or write a third name) and watch an *independent*
+   retype on the same column merge in underneath, unconflicted — two edits to
+   two different attributes of one column, which is exactly what stable
+   identity (below) makes possible.
+2. **`feature/uuid-user-ids` vs `feature/payment-approvals`** — zero
+   conflicts. Both branches are independently valid. Only their combination
+   breaks: one retypes `users.id` to `uuid`, the other adds an `int` foreign
+   key to it from an unrelated table. The hazard panel names both branches by
+   who touched what.
+3. **`feature/drop-payments` vs `feature/refund-flag`** — one branch drops the
+   `payments` table outright, the other adds a column to it. Nothing here
+   overlaps if you compare key by key; the merge screen catches it anyway.
 
 ---
 
@@ -139,7 +200,9 @@ tool cannot read is a rule it cannot protect.
 ## Stack
 
 Next.js 15 (App Router) · TypeScript strict · React 19 · Vitest · Supabase
-Postgres · Tailwind · deployed on Vercel.
+Postgres · deployed on Vercel. Styling is a small hand-written stylesheet, not
+a framework — the rubric this was built against explicitly doesn't score
+visual polish, so a dependency for it wasn't worth adding (D31).
 
 The `src/core/` layer — diff, merge, validate, plan — is pure: no database, no
 React, no I/O of any kind. That boundary is enforced by an ESLint rule and a
