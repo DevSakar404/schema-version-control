@@ -9,6 +9,13 @@
   --warning: #d9a441;
   --safe: #4caf7d;
   --blocking: #b98aff;
+  /* Translucent card surfaces, so the ambient background (D-whatever) shows
+     through content, not just empty margins. Separate from --bg-raised on
+     purpose: buttons need solid, high-contrast backgrounds to read as
+     clickable, and the skeleton shimmer needs an opaque gradient stop or the
+     moving background would show through loading placeholders too. */
+  --surface: rgba(20, 23, 27, 0.68);
+  --surface-header: rgba(255, 255, 255, 0.035);
   /* Diff tints, following the convention a code-review diff has trained
      everyone on: a faint wash across the line, a stronger one behind the
      line-number gutter so the eye can track the changed side. */
@@ -69,7 +76,9 @@ button {
 }
 
 .card {
-  background: var(--bg-raised);
+  background: var(--surface);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 1rem 1.25rem;
@@ -135,6 +144,9 @@ input:focus, select:focus, textarea:focus {
 /* ------------------------------------------------------------ diff view */
 
 .diff-file {
+  background: var(--surface);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
   border: 1px solid var(--border);
   border-radius: 6px;
   overflow: hidden;
@@ -146,7 +158,7 @@ input:focus, select:focus, textarea:focus {
   align-items: center;
   gap: 0.5rem;
   padding: 0.5rem 0.75rem;
-  background: var(--bg-raised);
+  background: var(--surface-header);
   border-bottom: 1px solid var(--border);
 }
 
@@ -318,4 +330,17 @@ input:focus, select:focus, textarea:focus {
    stay; only the falling streak stops. */
 @media (prefers-reduced-motion: reduce) {
   .bg-line::after { animation: none; }
+}
+
+/* Some people turn off transparency system-wide for legibility (macOS
+   "Reduce Transparency", Windows "Transparency effects" off). Honor it the
+   same way prefers-reduced-motion is already honored above: fall back to a
+   solid surface rather than overriding their OS setting with our own taste. */
+@media (prefers-reduced-transparency: reduce) {
+  .card, .diff-file {
+    background: var(--bg-raised);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .diff-file-header { background: var(--bg-raised); }
 }
