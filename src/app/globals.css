@@ -217,3 +217,29 @@ input:focus, select:focus, textarea:focus {
   color: var(--text-dim);
   padding: 0.05rem 1rem 0.05rem 6.85rem;
 }
+
+/* ------------------------------------------------------------ skeletons */
+
+.skeleton {
+  display: block;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    var(--bg-raised) 25%,
+    rgba(255, 255, 255, 0.055) 37%,
+    var(--bg-raised) 63%
+  );
+  background-size: 400% 100%;
+  animation: skeleton-shimmer 1.4s ease infinite;
+}
+
+@keyframes skeleton-shimmer {
+  from { background-position: 100% 50%; }
+  to { background-position: 0 50%; }
+}
+
+/* A shimmer is decoration, not information — anyone who has asked the OS to
+   stop moving things gets a flat placeholder instead. */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+}
