@@ -16,6 +16,13 @@
      moving background would show through loading placeholders too. */
   --surface: rgba(20, 23, 27, 0.68);
   --surface-header: rgba(255, 255, 255, 0.035);
+  /* Lighter and less blurred than --surface on purpose: .page wraps every
+     .card on the page, so a card's OWN blur is already applied on top of
+     whatever .page renders behind it. Two full-strength frosted layers
+     stacked would compound into a flat, over-blurred mud rather than
+     readable depth — this stays subtle so cards still stand out as the
+     more "frosted" surface within it. */
+  --surface-page: rgba(11, 13, 16, 0.45);
   /* Diff tints, following the convention a code-review diff has trained
      everyone on: a faint wash across the line, a stronger one behind the
      line-number gutter so the eye can track the changed side. */
@@ -32,9 +39,12 @@
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+}
 
-html, body {
+html,
+body {
   margin: 0;
   padding: 0;
   background: var(--bg);
@@ -44,10 +54,19 @@ html, body {
   line-height: 1.5;
 }
 
-a { color: var(--accent); text-decoration: none; }
-a:hover { text-decoration: underline; }
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
 
-code, pre { font-family: var(--mono); }
+a:hover {
+  text-decoration: underline;
+}
+
+code,
+pre {
+  font-family: var(--mono);
+}
 
 button {
   font-family: inherit;
@@ -63,6 +82,11 @@ button {
   max-width: 960px;
   margin: 0 auto;
   padding: 2rem 1.5rem 4rem;
+  background: var(--surface-page);
+  backdrop-filter: blur(1px);
+  -webkit-backdrop-filter: blur(1px);
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
 }
 
 .pill {
@@ -97,8 +121,14 @@ button {
   font-weight: 500;
 }
 
-.btn:hover:not(:disabled) { border-color: var(--accent); }
-.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 
 .btn-primary {
   background: var(--accent);
@@ -107,9 +137,13 @@ button {
   font-weight: 600;
 }
 
-.btn-primary:hover:not(:disabled) { filter: brightness(1.08); }
+.btn-primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
 
-input, select, textarea {
+input,
+select,
+textarea {
   font-family: inherit;
   font-size: 0.9rem;
   background: var(--bg);
@@ -119,13 +153,20 @@ input, select, textarea {
   padding: 0.4rem 0.6rem;
 }
 
-input:focus, select:focus, textarea:focus {
+input:focus,
+select:focus,
+textarea:focus {
   outline: 2px solid var(--accent);
   outline-offset: -1px;
 }
 
-.text-dim { color: var(--text-dim); }
-.mono { font-family: var(--mono); }
+.text-dim {
+  color: var(--text-dim);
+}
+
+.mono {
+  font-family: var(--mono);
+}
 
 /* Visually hidden, still announced. Used so a diff row's status reaches a
    screen reader as words, not only as a colour and a glyph. */
@@ -174,12 +215,19 @@ input:focus, select:focus, textarea:focus {
   white-space: nowrap;
 }
 
-.diff-stat .add { color: var(--safe); }
-.diff-stat .del { color: var(--danger); }
+.diff-stat .add {
+  color: var(--safe);
+}
+
+.diff-stat .del {
+  color: var(--danger);
+}
 
 /* Horizontal scrolling belongs to the code area alone — a long constraint
    definition must never make the whole page scroll sideways. */
-.diff-body { overflow-x: auto; }
+.diff-body {
+  overflow-x: auto;
+}
 
 .diff-line {
   display: grid;
@@ -210,15 +258,35 @@ input:focus, select:focus, textarea:focus {
   font-weight: 700;
 }
 
-.diff-line--add { background: var(--diff-add-bg); }
-.diff-line--add .diff-num { background: var(--diff-add-gutter); opacity: 0.85; }
-.diff-line--add .diff-sign { color: var(--safe); }
+.diff-line--add {
+  background: var(--diff-add-bg);
+}
 
-.diff-line--del { background: var(--diff-del-bg); }
-.diff-line--del .diff-num { background: var(--diff-del-gutter); opacity: 0.85; }
-.diff-line--del .diff-sign { color: var(--danger); }
+.diff-line--add .diff-num {
+  background: var(--diff-add-gutter);
+  opacity: 0.85;
+}
 
-.diff-line--context .diff-code { color: var(--text-dim); }
+.diff-line--add .diff-sign {
+  color: var(--safe);
+}
+
+.diff-line--del {
+  background: var(--diff-del-bg);
+}
+
+.diff-line--del .diff-num {
+  background: var(--diff-del-gutter);
+  opacity: 0.85;
+}
+
+.diff-line--del .diff-sign {
+  color: var(--danger);
+}
+
+.diff-line--context .diff-code {
+  color: var(--text-dim);
+}
 
 .diff-hunk {
   background: var(--diff-hunk-bg);
@@ -243,25 +311,30 @@ input:focus, select:focus, textarea:focus {
 .skeleton {
   display: block;
   border-radius: 4px;
-  background: linear-gradient(
-    90deg,
-    var(--bg-raised) 25%,
-    rgba(255, 255, 255, 0.055) 37%,
-    var(--bg-raised) 63%
-  );
+  background: linear-gradient(90deg,
+      var(--bg-raised) 25%,
+      rgba(255, 255, 255, 0.055) 37%,
+      var(--bg-raised) 63%);
   background-size: 400% 100%;
   animation: skeleton-shimmer 1.4s ease infinite;
 }
 
 @keyframes skeleton-shimmer {
-  from { background-position: 100% 50%; }
-  to { background-position: 0 50%; }
+  from {
+    background-position: 100% 50%;
+  }
+
+  to {
+    background-position: 0 50%;
+  }
 }
 
 /* A shimmer is decoration, not information — anyone who has asked the OS to
    stop moving things gets a flat placeholder instead. */
 @media (prefers-reduced-motion: reduce) {
-  .skeleton { animation: none; }
+  .skeleton {
+    animation: none;
+  }
 }
 
 /* -------------------------------------------------- background streaks */
@@ -308,28 +381,63 @@ input:focus, select:focus, textarea:focus {
   animation: bg-line-drop 9s cubic-bezier(0.4, 0.26, 0, 0.97) infinite;
 }
 
-.bg-line:nth-child(1) { left: 12%; }
-.bg-line:nth-child(2) { left: 31%; }
-.bg-line:nth-child(3) { left: 50%; }
-.bg-line:nth-child(4) { left: 69%; }
-.bg-line:nth-child(5) { left: 88%; }
+.bg-line:nth-child(1) {
+  left: 12%;
+}
 
-.bg-line:nth-child(1)::after { animation-delay: 0s; }
-.bg-line:nth-child(2)::after { animation-delay: 1.8s; }
-.bg-line:nth-child(3)::after { animation-delay: 3.6s; }
-.bg-line:nth-child(4)::after { animation-delay: 5.4s; }
-.bg-line:nth-child(5)::after { animation-delay: 7.2s; }
+.bg-line:nth-child(2) {
+  left: 31%;
+}
+
+.bg-line:nth-child(3) {
+  left: 50%;
+}
+
+.bg-line:nth-child(4) {
+  left: 69%;
+}
+
+.bg-line:nth-child(5) {
+  left: 88%;
+}
+
+.bg-line:nth-child(1)::after {
+  animation-delay: 0s;
+}
+
+.bg-line:nth-child(2)::after {
+  animation-delay: 1.8s;
+}
+
+.bg-line:nth-child(3)::after {
+  animation-delay: 3.6s;
+}
+
+.bg-line:nth-child(4)::after {
+  animation-delay: 5.4s;
+}
+
+.bg-line:nth-child(5)::after {
+  animation-delay: 7.2s;
+}
 
 @keyframes bg-line-drop {
-  0% { top: -40%; }
-  100% { top: 110%; }
+  0% {
+    top: -40%;
+  }
+
+  100% {
+    top: 110%;
+  }
 }
 
 /* A moving background is decoration, not information — freeze it for
    anyone who has asked the OS to stop things moving. The static hairlines
    stay; only the falling streak stops. */
 @media (prefers-reduced-motion: reduce) {
-  .bg-line::after { animation: none; }
+  .bg-line::after {
+    animation: none;
+  }
 }
 
 /* Some people turn off transparency system-wide for legibility (macOS
@@ -337,10 +445,23 @@ input:focus, select:focus, textarea:focus {
    same way prefers-reduced-motion is already honored above: fall back to a
    solid surface rather than overriding their OS setting with our own taste. */
 @media (prefers-reduced-transparency: reduce) {
-  .card, .diff-file {
+
+  .card,
+  .diff-file {
     background: var(--bg-raised);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
-  .diff-file-header { background: var(--bg-raised); }
+
+  .diff-file-header {
+    background: var(--bg-raised);
+  }
+
+  .page {
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    border-left: none;
+    border-right: none;
+  }
 }
