@@ -77,7 +77,11 @@ export function MergeBoard({
         setCommitError({ message: body.error?.message ?? 'merge failed', branchMoved: false });
         return;
       }
-      router.push(`/p/${projectId}`);
+      // Straight to the target branch's schema, not the project list — a
+      // successful merge is the moment someone most wants to see what
+      // actually landed, and the branch list only shows a commit message,
+      // not the merged tables themselves.
+      router.push(`/p/${projectId}/b/${targetId}`);
     } finally {
       setCommitting(false);
     }
