@@ -14,13 +14,15 @@ Row data is out of scope. The artifact under version control is the schema.
 
 ## Status
 
-**Built. 283 tests passing.**
+**Built. 285 tests passing.**
 
-**Live:** _[deploy URL — fill in after `vercel --prod`]_
+**Live:** <!-- DEPLOY_URL --> _(fill in after `vercel --prod`)_
+
+**Repo:** https://github.com/DevSakar404/schema-version-control
 
 | Document | What it covers |
 | --- | --- |
-| [decisions.md](decisions.md) | Every real call made, with the alternatives rejected and the tradeoffs accepted — 40 entries, running through the Day 5 reflection |
+| [decisions.md](decisions.md) | Every real call made, with the alternatives rejected and the tradeoffs accepted — 42 entries, running through deployment |
 | [design.md](design.md) | The specification — data model, algorithms, taxonomies, API, screens, testing |
 | [docs/implementation-plan.md](docs/implementation-plan.md) | 21 tasks over 5 days, each with file paths, interface contracts, and test assertions |
 
@@ -63,7 +65,7 @@ break the demo permanently.
 **Tests:**
 
 ```bash
-npm test          # 283 tests. Core suite needs no database at all.
+npm test          # 285 tests. Core suite needs no database at all.
 npm run typecheck
 npm run lint
 ```
@@ -71,7 +73,7 @@ npm run lint
 The database-backed tests (`tests/db/`) skip themselves automatically when
 `DATABASE_URL` is unset, so `npm test` runs clean on a machine with no
 Supabase project configured — only the pure `src/core/` suite runs, which is
-most of the 283.
+most of the 285.
 
 ---
 

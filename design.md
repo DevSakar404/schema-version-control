@@ -653,7 +653,7 @@ implementation would be indirection without a payer.
 
 ## 10. Persistence
 
-Supabase Postgres. Four tables:
+Supabase Postgres. Three tables:
 
 ```
 projects  (id, name, created_at)
