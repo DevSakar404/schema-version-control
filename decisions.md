@@ -1073,17 +1073,72 @@ at which point what is needed is not isolation anyway, it is D2's
 authentication, and building isolation first would be building the thing that
 gets deleted.
 
+### D43. The setup error explains itself, because a teammate hit it
+
+**Chose:** `explainConnectionError` in `src/db/client.ts` detects an
+unroutable-host failure against a Supabase *direct* host and appends the
+three-step fix. Wired into `npm run db:migrate` and into `handle()`, which
+every API route funnels through.
+
+**Considered:** a louder warning in the README; refusing to start when
+`DATABASE_URL` is not a pooler URL; leaving it alone, since the README does
+already say to use the pooler.
+
+**Reasoning:** this stopped being hypothetical — someone else cloned the repo
+and got `connect ENETUNREACH 2406:da1c:...:5432` on the first command after
+`npm install`. The README warning was already there and did not help, and the
+reason it did not is worth naming: the error gives you no reason to suspect
+the README. It names no product, no protocol, and no setting. Nothing in it
+points at Supabase, at IPv6, or at a pooler. Documentation only helps someone
+who knows what to look up.
+
+Refusing to start unless the URL is a pooler URL was the tempting version —
+it is fewer lines and fires deterministically — but it is wrong: the direct
+connection works perfectly on a network with IPv6, and a local Postgres on
+`localhost:5432` is a legitimate setup this project should not reject. The
+check therefore reads the *failure*, not the configuration, and it stays
+silent unless the host really is a direct Supabase host. Being told to switch
+to the pooler you are already using would be worse than the raw error.
+
+**Accepted tradeoff:** the detection is a string match on `ENETUNREACH` and a
+host shape, so a future Supabase hostname change makes it silently stop
+firing — degrading back to the driver's original message, which is exactly
+where this started. It is pinned by four tests, including two asserting it
+stays *quiet*, since a false positive here misdirects someone whose real
+problem is something else.
+
+Auditing the rest of the first-run path with the same test — *does the error
+contain the word you would search for?* — found two more and only two.
+A missing `.env` died in a raw `ENOENT` stack trace from `readFileSync`, so
+`db:migrate` now checks for the file and prints `cp .env.example .env`. And
+`package.json` had no `engines` floor, so an old Node would fail somewhere
+inside Next's build with nothing pointing at the version; it now declares
+`>=20.9.0`.
+
+**Deliberately cut:** the same treatment for the remaining setup failures — a
+wrong password, a database that has not been migrated. Those already name
+their own cause (`password authentication failed`, `relation does not
+exist`), so they fail the test the three above pass: an error is only worth
+rewriting when it does not contain the word you would search for. Rewriting
+one that does just puts my phrasing between the reader and a working search.
+
+The wider point is that "setup a stranger can run in one shot" is not a
+documentation property. It is a property of what the software says when it
+fails, and it cannot be verified by the person who wrote the setup, because
+they already know the answer. It took a second machine to find this.
+
 ---
 
 ## Closing state
 
-285 tests pass; 19 database-backed tests skip themselves when `DATABASE_URL`
+289 tests pass; 19 database-backed tests skip themselves when `DATABASE_URL`
 is unset, so a clone with no Supabase project still runs the entire pure
 `core/` suite clean.
 
-42 decisions logged across five days: 18 before any code existed, 7 from the
-design review that found the design wrong in seven places (D19–D25), 15 from
-implementation and live use, and these 2 from deployment. The ones worth
+43 decisions logged: 18 before any code existed, 7 from the design review that
+found the design wrong in seven places (D19–D25), 15 from implementation and
+live use, 2 from deployment, and D43 from watching someone else's first run
+fail. The ones worth
 reading first, if this file is read out of order, are **D19** (delete/modify
 has to be transitive over containment, or merge silently discards a
 colleague's work), **D20** (renames need a cycle break, and the foreign-key

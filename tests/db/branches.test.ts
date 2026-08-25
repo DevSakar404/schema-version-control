@@ -1,11 +1,70 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { db, hasDatabase, closeDb, parseConnectionUrl } from '@/db/client';
+import { db, hasDatabase, closeDb, parseConnectionUrl, explainConnectionError } from '@/db/client';
 import { createProject } from '@/db/projects';
 import { insertCommit, getCommit, getCommitGraph } from '@/db/commits';
 import { advanceHead, createBranch, listBranches } from '@/db/branches';
 import { emptySchema } from '@/core/schema';
 import { nanoIdGen } from '@/core/ids';
 import type { Commit } from '@/core/history';
+
+describe('explainConnectionError', () => {
+  // Pure — runs with no database. Pins the setup experience: a fresh clone
+  // whose DATABASE_URL is Supabase's default (direct) connection fails with
+  // an error naming neither Supabase nor IPv6. Regression test for the day a
+  // teammate hit exactly this and had to be told the fix out of band.
+  const withUrl = (url: string | undefined, fn: () => void) => {
+    const previous = process.env.DATABASE_URL;
+    if (url === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = url;
+    try {
+      fn();
+    } finally {
+      if (previous === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = previous;
+    }
+  };
+
+  const unroutable = Object.assign(
+    new Error('connect ENETUNREACH 2406:da1c:e01:b00::5:5432'),
+    { code: 'ENETUNREACH' },
+  );
+
+  it('names the transaction pooler when the direct connection is unroutable', () => {
+    withUrl('postgresql://postgres:pw@db.abcdef.supabase.co:5432/postgres', () => {
+      const text = explainConnectionError(unroutable);
+      expect(text).toContain('Transaction pooler');
+      expect(text).toContain('6543');
+      expect(text).toContain('db.abcdef.supabase.co');
+      // The driver's own text is kept, not swallowed.
+      expect(text).toContain('ENETUNREACH');
+    });
+  });
+
+  it('stays quiet when the host is already the pooler', () => {
+    // Same error, different cause — the machine is offline, or the pooler is
+    // down. Telling someone to switch to the pooler they are already on is
+    // worse than saying nothing.
+    withUrl('postgresql://postgres.abcdef:pw@aws-0-ap-south-1.pooler.supabase.com:6543/postgres', () => {
+      expect(explainConnectionError(unroutable)).toBe(unroutable.message);
+    });
+  });
+
+  it('stays quiet for a non-Supabase host and for an unset URL', () => {
+    withUrl('postgres://u:p@localhost:5432/postgres', () => {
+      expect(explainConnectionError(unroutable)).toBe(unroutable.message);
+    });
+    withUrl(undefined, () => {
+      expect(explainConnectionError(unroutable)).toBe(unroutable.message);
+    });
+  });
+
+  it('passes unrelated errors through untouched', () => {
+    withUrl('postgresql://postgres:pw@db.abcdef.supabase.co:5432/postgres', () => {
+      const other = new Error('password authentication failed for user "postgres"');
+      expect(explainConnectionError(other)).toBe(other.message);
+    });
+  });
+});
 
 describe('parseConnectionUrl', () => {
   // Pure — runs with no database. This is the parser that made a real
