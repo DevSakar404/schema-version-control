@@ -112,6 +112,69 @@ function safeDecode(value: string): string {
 }
 
 /**
+ * Rewrite an unroutable-host failure into the fix for it.
+ *
+ * Supabase's dashboard offers two connection strings, and the one the copy
+ * button hands you first is the DIRECT connection —
+ * `db.<ref>.supabase.co:5432` — which on the free tier resolves only to an
+ * IPv6 address. On any network without an IPv6 route (most home ISPs, plenty
+ * of office networks, and every Vercel function — see D41) the driver fails
+ * with `connect ENETUNREACH 2406:da1c:...:5432`.
+ *
+ * That message names neither Supabase, nor IPv6, nor the pooler that fixes
+ * it. `npm run db:migrate` is the first command a fresh clone runs, so this
+ * error *is* the setup experience: someone who has never seen this repo hits
+ * it before they have seen a single screen. Documenting the fix in the README
+ * is not enough, because the error gives no reason to go looking there.
+ *
+ * Returns the driver's message untouched when this is not that failure — a
+ * genuinely offline machine, or a host that has nothing to do with Supabase,
+ * should not be told to go change its connection pooler.
+ */
+export function explainConnectionError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const code = (error as { code?: unknown } | null)?.code;
+  const unroutable = /ENETUNREACH|EHOSTUNREACH/.test(`${message} ${String(code ?? '')}`);
+  if (!unroutable) return message;
+
+  const host = hostOf(process.env.DATABASE_URL);
+  if (!host?.startsWith('db.') || !host.endsWith('.supabase.co')) return message;
+
+  return `${message}
+
+Cannot reach this host:
+  ${host}
+That is Supabase's DIRECT connection, and it resolves only to an IPv6
+address — your network has no IPv6 route to it. Nothing is wrong with the
+database, the password, or this project.
+
+Fix it in three steps:
+  1. Supabase dashboard -> Connect -> Connection string -> URI
+  2. Choose "Transaction pooler", NOT "Direct connection". Its host ends in
+     .pooler.supabase.com and its port is 6543.
+  3. Put that string in DATABASE_URL (keep your password), then re-run.
+
+The pooler is reachable over IPv4. This is the same reason the deployed app
+uses it; decisions.md D41 has the full story.
+
+Already changed it and still seeing this? Then the value above is not coming
+from the file you edited. In precedence order, check:
+  1. an exported shell variable  ->  unset DATABASE_URL
+  2. .env.local, which Next.js loads ahead of .env
+  3. a .env in a different directory than the one you are running from`;
+}
+
+/** Host of a connection URL, or undefined if it is absent or unparseable. */
+function hostOf(url: string | undefined): string | undefined {
+  if (!url?.trim()) return undefined;
+  try {
+    return parseConnectionUrl(url.trim()).host;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Assert that a statement which must return a row actually did.
  *
  * INSERT ... RETURNING always yields a row, but the driver's type does not say

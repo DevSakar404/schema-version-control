@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { explainConnectionError } from '@/db/client';
 
 /**
  * Response envelope. Every route returns `{ data }` or `{ error }`, so the
@@ -78,7 +79,9 @@ export async function handle(fn: () => Promise<NextResponse>): Promise<NextRespo
         { status: 422 },
       );
     }
-    const message = e instanceof Error ? e.message : 'unexpected error';
+    // Not just `e.message`: a misconfigured DATABASE_URL surfaces here as an
+    // unroutable-address error, and the fix for it is worth stating (D43).
+    const message = e ? explainConnectionError(e) : 'unexpected error';
     return fail('internal', message, 500);
   }
 }

@@ -988,6 +988,181 @@ one.
 
 ---
 
-## Log
+## Day 5 — Task 21: deployment
 
-Entries below are added as the build progresses.
+The last two decisions in this log are infrastructure ones, and both were
+made at deploy time rather than at design time — which is itself the point.
+Neither was visible from the model, the tests, or a local `npm run dev`.
+
+### D41. Vercel plus Supabase's transaction pooler, and what that forces
+
+**Chose:** Vercel for the app, Supabase Postgres reached through the
+**transaction pooler** (port 6543) rather than the direct connection (5432).
+
+**Considered:** the Supabase direct connection; a long-lived server on
+Railway or Fly with an ordinary connection pool; Postgres in the same
+container as the app.
+
+**Reasoning:** the direct connection is IPv6-only on Supabase's free tier and
+Vercel's functions cannot route to it — this is not a preference between two
+working options, the direct URL simply fails. A long-lived server would let
+me keep one normal pool and sidestep the whole issue, and if this were a
+product I expected to run I would take that; for a reviewer who needs a URL
+that works on the first click, Vercel's zero-config deploy of a Next.js app
+is worth more than pool ergonomics.
+
+Once the pooler is the only route, three non-default settings follow, and
+none of them are guessable from a stack trace: `prepare: false` (pgbouncer in
+transaction mode rejects prepared statements), `ssl: 'require'` (Supabase
+refuses plaintext), and a deliberately low `max`, because every serverless
+invocation holds a pool of its own rather than sharing one. All three sit in
+`src/db/client.ts` with the reason written beside them, because the failure
+mode of getting any of them wrong is an error that names a symptom —
+"prepared statement already exists" — and never the cause.
+
+**Accepted tradeoff:** serverless plus a transaction pooler means no
+`LISTEN`/`NOTIFY`, no session-level state, and no long-running transactions.
+None of those are used here, and the reason is not luck: the branch-head
+compare-and-swap (D12) was written as a single statement because that was the
+correct way to express it, and it now happens to be the only way this
+deployment could express it. A design that had reached for a transaction
+spanning several round trips would have had to be rewritten at this step.
+
+**What this choice already cost:** D27 (parsing connection URLs by splitting
+at the last `@`) and the HMR connection-pool leak fixed by stashing the client
+on `globalThis` are both downstream of it. Two live bugs, neither reachable by
+any test in the suite, both in the connection layer rather than anywhere near
+the domain logic this project is actually about.
+
+### D42. The deployed demo has no auth, and is designed to be reset instead
+
+**Chose:** deploy with no authentication, one seeded demo project shared by
+every visitor, and a **Reset demo** button on the project page.
+
+**Considered:** basic auth across the whole site; anonymous visitors held in
+read-only mode; per-visitor project isolation keyed by a cookie.
+
+**Reasoning:** D2 scoped authentication out for a five-day build, and that
+still holds — but scoping it out of a *local* build and out of a *public URL*
+are not the same bet, and it would be dishonest to pretend the earlier
+decision settled this one. On a shared URL, anyone with the link edits the
+same rows, so the first reviewer to resolve a conflict and merge changes what
+the second reviewer sees on arrival. Read-only mode is the worst option
+available: it removes exactly the interaction — resolving a conflict — that
+the product exists to demonstrate. Cookie-keyed isolation is the *correct*
+answer and is perhaps two hours of work, but it puts a visitor-supplied id in
+front of every query and adds a stale-cookie case (a project id that no longer
+exists) to every screen, which is a new failure mode introduced at the last
+step of the build, with no time left to find out what it breaks.
+
+The mitigation is that nothing on the deployed instance is destructible.
+Commits are append-only (D5), so no sequence of clicks removes history, and
+Reset restores all three seeded scenarios to their exact initial state. "Just
+reset it" is a legitimate answer here only because the data model made it one
+— which is the payoff of D5 showing up in a place D5 was not written for.
+
+**Accepted tradeoff:** two reviewers exploring the deployed URL
+simultaneously can confuse each other, and a mid-merge reset by one is
+visible to the other as state changing underneath them. Stated here rather
+than left to be discovered, because it is the visible price of the auth
+decision.
+
+**Deliberately cut:** per-visitor isolation. The right cut for a demo that is
+meant to be shared and reset; the wrong one the moment this has real users —
+at which point what is needed is not isolation anyway, it is D2's
+authentication, and building isolation first would be building the thing that
+gets deleted.
+
+### D43. The setup error explains itself, because a teammate hit it
+
+**Chose:** `explainConnectionError` in `src/db/client.ts` detects an
+unroutable-host failure against a Supabase *direct* host and appends the
+three-step fix. Wired into `npm run db:migrate` and into `handle()`, which
+every API route funnels through.
+
+**Considered:** a louder warning in the README; refusing to start when
+`DATABASE_URL` is not a pooler URL; leaving it alone, since the README does
+already say to use the pooler.
+
+**Reasoning:** this stopped being hypothetical — someone else cloned the repo
+and got `connect ENETUNREACH 2406:da1c:...:5432` on the first command after
+`npm install`. The README warning was already there and did not help, and the
+reason it did not is worth naming: the error gives you no reason to suspect
+the README. It names no product, no protocol, and no setting. Nothing in it
+points at Supabase, at IPv6, or at a pooler. Documentation only helps someone
+who knows what to look up.
+
+Refusing to start unless the URL is a pooler URL was the tempting version —
+it is fewer lines and fires deterministically — but it is wrong: the direct
+connection works perfectly on a network with IPv6, and a local Postgres on
+`localhost:5432` is a legitimate setup this project should not reject. The
+check therefore reads the *failure*, not the configuration, and it stays
+silent unless the host really is a direct Supabase host. Being told to switch
+to the pooler you are already using would be worse than the raw error.
+
+**Accepted tradeoff:** the detection is a string match on `ENETUNREACH` and a
+host shape, so a future Supabase hostname change makes it silently stop
+firing — degrading back to the driver's original message, which is exactly
+where this started. It is pinned by four tests, including two asserting it
+stays *quiet*, since a false positive here misdirects someone whose real
+problem is something else.
+
+Auditing the rest of the first-run path with the same test — *does the error
+contain the word you would search for?* — found two more and only two.
+A missing `.env` died in a raw `ENOENT` stack trace from `readFileSync`, so
+`db:migrate` now checks for the file and prints `cp .env.example .env`. And
+`package.json` had no `engines` floor, so an old Node would fail somewhere
+inside Next's build with nothing pointing at the version; it now declares
+`>=20.9.0`.
+
+**Deliberately cut:** the same treatment for the remaining setup failures — a
+wrong password, a database that has not been migrated. Those already name
+their own cause (`password authentication failed`, `relation does not
+exist`), so they fail the test the three above pass: an error is only worth
+rewriting when it does not contain the word you would search for. Rewriting
+one that does just puts my phrasing between the reader and a working search.
+
+**The follow-up, which is the more interesting half.** The teammate applied
+the fix and got *the identical error*. The cause was precedence: a real
+environment variable beats the `.env` file, and Next.js loads `.env.local`
+ahead of `.env`, so an edit to the file you were told to edit can change
+nothing at all — silently, with no diff in the output to suggest the edit was
+ignored rather than wrong. This project's own loader caused it, via a
+`!process.env[key]` guard written to make CI work.
+
+The guard is correct and stayed. What changed is that it no longer does it
+quietly: `db:migrate` compares what the file said against what is actually in
+use and warns when they differ, naming `unset DATABASE_URL` as the fix. The
+connection error grew a matching section — *already changed it and still
+seeing this?* — listing the three shadowing sources in precedence order.
+
+That is the same failure as D43's original in a new place: an error that was
+technically accurate and practically unactionable, because it described the
+value it received and not the reason that value was not the one you set. A
+message that tells you to do the thing you have already done twice is worse
+than no message, since it moves suspicion onto the part that is working.
+
+The wider point is that "setup a stranger can run in one shot" is not a
+documentation property. It is a property of what the software says when it
+fails, and it cannot be verified by the person who wrote the setup, because
+they already know the answer. It took a second machine to find this.
+
+---
+
+## Closing state
+
+289 tests pass; 19 database-backed tests skip themselves when `DATABASE_URL`
+is unset, so a clone with no Supabase project still runs the entire pure
+`core/` suite clean.
+
+43 decisions logged: 18 before any code existed, 7 from the design review that
+found the design wrong in seven places (D19–D25), 15 from implementation and
+live use, 2 from deployment, and D43 from watching someone else's first run
+fail. The ones worth
+reading first, if this file is read out of order, are **D19** (delete/modify
+has to be transitive over containment, or merge silently discards a
+colleague's work), **D20** (renames need a cycle break, and the foreign-key
+reasoning that looked identical was the wrong tool), and **D38** (the most
+serious bug in the build, found by clicking rather than by testing).
+
+The live URL is in [README.md](README.md).
