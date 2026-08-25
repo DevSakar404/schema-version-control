@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildDiffTree } from '@/core/difftree';
+import { buildDiffTree, toDiffLines, diffStat } from '@/core/difftree';
 import { applyOps, type SchemaOp } from '@/core/ops';
 import { counterIdGen } from '@/core/ids';
 import { base } from './fixture';
@@ -177,5 +177,89 @@ describe('labels — the before/after lines that make it read like a code diff',
     expect(pkey.status).toBe('unchanged');
     expect(pkey.beforeLabel).toBe('CONSTRAINT users_pkey PRIMARY KEY (id)');
     expect(pkey.afterLabel).toBe('CONSTRAINT users_pkey PRIMARY KEY (user_id)');
+  });
+});
+
+describe('toDiffLines — numbered lines, the shape a code-review diff renders', () => {
+  it('numbers context lines on both sides, continuously down the whole table', () => {
+    const lines = toDiffLines(users(buildDiffTree(base(), base())))
+      .filter((l) => l.kind !== 'hunk');
+    // 3 columns, then 1 constraint, then 1 index — numbering does not restart
+    // per section, because the table is the "file" and sections are hunks.
+    expect(lines.map((l) => [l.beforeNo, l.afterNo])).toEqual([
+      [1, 1], [2, 2], [3, 3], [4, 4], [5, 5],
+    ]);
+  });
+
+  it('a replaced row consumes one number on each side, like a changed text line', () => {
+    const lines = toDiffLines(users(tree([{ kind: 'retype_column', columnId: 'c2', type: { kind: 'text' } }])));
+    const del = lines.find((l) => l.kind === 'del')!;
+    const add = lines.find((l) => l.kind === 'add')!;
+    expect([del.beforeNo, del.afterNo]).toEqual([2, null]);
+    expect([add.beforeNo, add.afterNo]).toEqual([null, 2]);
+    // The following context line continues from both counters.
+    const after = lines.filter((l) => l.kind === 'context').find((l) => l.beforeNo === 3)!;
+    expect(after.afterNo).toBe(3);
+  });
+
+  it('an added line advances only the after side, so the two gutters drift apart', () => {
+    const lines = toDiffLines(users(tree([
+      { kind: 'add_column', tableId: 't1', name: 'nickname', type: { kind: 'text' }, nullable: true, default: null },
+    ])));
+    const add = lines.find((l) => l.kind === 'add')!;
+    expect(add.beforeNo).toBeNull();
+    expect(add.afterNo).toBe(4);
+    // The constraint after it is unchanged but now sits at different numbers.
+    const constraint = lines.filter((l) => l.kind === 'context').at(-2)!;
+    expect(constraint.beforeNo).toBe(4);
+    expect(constraint.afterNo).toBe(5);
+  });
+
+  it('a dropped line advances only the before side', () => {
+    const lines = toDiffLines(users(tree([{ kind: 'drop_column', columnId: 'c3' }])));
+    const del = lines.find((l) => l.kind === 'del')!;
+    expect([del.beforeNo, del.afterNo]).toEqual([3, null]);
+  });
+
+  it('emits a hunk header per non-empty section, with per-side counts', () => {
+    const hunks = toDiffLines(users(buildDiffTree(base(), base()))).filter((l) => l.kind === 'hunk');
+    expect(hunks.map((h) => h.text)).toEqual([
+      '@@ -3 +3 @@ columns',
+      '@@ -1 +1 @@ constraints',
+      '@@ -1 +1 @@ indexes',
+    ]);
+  });
+
+  it('skips a section that has no rows on either side', () => {
+    const next = counterIdGen('z');
+    let head = applyOps(base(), [{ kind: 'create_table', name: 'bare' }], next);
+    const bareId = head.tables[1]!.id;
+    head = applyOps(head, [
+      { kind: 'add_column', tableId: bareId, name: 'id', type: { kind: 'int' }, nullable: false, default: null },
+    ], next);
+    const bare = buildDiffTree(base(), head).tables.find((t) => t.name === 'bare')!;
+    expect(toDiffLines(bare).filter((l) => l.kind === 'hunk').map((h) => h.text))
+      .toEqual(['@@ -0 +1 @@ columns']);
+  });
+
+  it('notes ride on the surviving line, not the removed one', () => {
+    const lines = toDiffLines(users(tree([{ kind: 'rename_column', columnId: 'c2', name: 'contact_email' }])));
+    expect(lines.find((l) => l.kind === 'del')!.notes).toEqual([]);
+    expect(lines.find((l) => l.kind === 'add')!.notes.join(' ')).toContain('Renamed');
+  });
+});
+
+describe('diffStat', () => {
+  it('counts added and removed lines for a +N −M stat', () => {
+    const lines = toDiffLines(users(tree([
+      { kind: 'retype_column', columnId: 'c2', type: { kind: 'text' } },
+      { kind: 'add_column', tableId: 't1', name: 'nickname', type: { kind: 'text' }, nullable: true, default: null },
+    ])));
+    expect(diffStat(lines)).toEqual({ added: 2, removed: 1 });
+  });
+
+  it('a dropped table is all removals', () => {
+    const lines = toDiffLines(users(tree([{ kind: 'drop_table', tableId: 't1' }])));
+    expect(diffStat(lines)).toEqual({ added: 0, removed: 5 });
   });
 });

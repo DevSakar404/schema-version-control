@@ -1,196 +1,131 @@
 /**
- * The full schema, annotated with what changed — a code-review diff rather
- * than a changelog (see core/difftree.ts for why both shapes exist).
+ * The full schema annotated with what changed, rendered the way a code review
+ * diff is: line-number gutters, hunk headers, and changed lines marked in
+ * place against unchanged context.
  *
- * Unchanged rows are rendered as dimmed context. A modified row is rendered
- * as two lines, the old one and the new one, the way a line-based diff shows
- * a replaced line. Tables with no changes at all collapse into a `<details>`
- * so they stay reachable without competing for attention — which is also why
- * this needs no client JavaScript.
+ * The mapping is deliberate — a table is the "file", its columns, constraints
+ * and indexes are the lines, and each section is a hunk. That borrows a visual
+ * grammar every engineer already reads fluently, so nothing here needs a
+ * legend. A replaced row shows both sides, old above new.
+ *
+ * Line numbering and stats come from core/difftree.ts, where they are tested;
+ * this file only turns them into markup. Collapsing uses <details>, so the
+ * whole component stays server-rendered with no client JavaScript.
  */
 
-import type { DiffRow, DiffTree, RowStatus, TableDiff } from '@/core/difftree';
+import { toDiffLines, diffStat, type DiffLine, type DiffTree, type RowStatus, type TableDiff } from '@/core/difftree';
 
-const MARKER: Record<RowStatus, { glyph: string; label: string; color: string }> = {
-  added: { glyph: '+', label: 'added', color: 'var(--safe)' },
-  dropped: { glyph: '−', label: 'dropped', color: 'var(--danger)' },
-  modified: { glyph: '~', label: 'changed', color: 'var(--warning)' },
-  unchanged: { glyph: ' ', label: 'unchanged', color: 'var(--text-dim)' },
+const TABLE_BADGE: Partial<Record<RowStatus, { label: string; color: string }>> = {
+  added: { label: 'table added', color: 'var(--safe)' },
+  dropped: { label: 'table dropped', color: 'var(--danger)' },
+  modified: { label: 'table changed', color: 'var(--warning)' },
 };
 
 export function SchemaDiffTree({ tree }: { tree: DiffTree }) {
   const changed = tree.tables.filter((t) => t.changeCount > 0);
   const unchanged = tree.tables.filter((t) => t.changeCount === 0);
 
+  const totals = changed
+    .map((t) => diffStat(toDiffLines(t)))
+    .reduce((acc, s) => ({ added: acc.added + s.added, removed: acc.removed + s.removed }), { added: 0, removed: 0 });
+
   return (
     <>
-      <p className="text-dim">
-        {tree.totalChanges} change{tree.totalChanges === 1 ? '' : 's'} across{' '}
-        {tree.changedTables} table{tree.changedTables === 1 ? '' : 's'}
-        {unchanged.length > 0 && `, ${unchanged.length} unchanged`}.
+      <p className="text-dim" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+        <span>
+          {tree.totalChanges} change{tree.totalChanges === 1 ? '' : 's'} across {tree.changedTables} table
+          {tree.changedTables === 1 ? '' : 's'}
+          {unchanged.length > 0 && `, ${unchanged.length} unchanged`}
+        </span>
+        <Stat added={totals.added} removed={totals.removed} />
       </p>
 
       {changed.map((table) => (
-        <TableCard key={table.id} table={table} />
+        <DiffFile key={table.id} table={table} />
       ))}
 
       {unchanged.length > 0 && (
-        <details className="card" style={{ marginBottom: '1rem' }}>
-          <summary className="text-dim" style={{ cursor: 'pointer' }}>
+        <details className="diff-file">
+          <summary className="diff-file-header text-dim" style={{ cursor: 'pointer' }}>
             {unchanged.length} unchanged table{unchanged.length === 1 ? '' : 's'}
           </summary>
-          <div style={{ marginTop: '0.75rem' }}>
-            {unchanged.map((table) => (
-              <div key={table.id} style={{ marginBottom: '1rem' }}>
-                {/* The name has to travel with the body here — without it,
-                    an expanded list of unchanged tables is just columns with
-                    no indication which table any of them belong to. */}
-                <h3 className="mono" style={{ margin: '0 0 0.2rem', fontSize: '0.95rem' }}>{table.name}</h3>
-                <TableBody table={table} />
-              </div>
-            ))}
-          </div>
+          {unchanged.map((table) => (
+            <DiffFile key={table.id} table={table} nested />
+          ))}
         </details>
       )}
     </>
   );
 }
 
-function TableCard({ table }: { table: TableDiff }) {
-  const marker = MARKER[table.status];
+function DiffFile({ table, nested }: { table: TableDiff; nested?: boolean }) {
+  const lines = toDiffLines(table);
+  const { added, removed } = diffStat(lines);
+  const badge = TABLE_BADGE[table.status];
+
   return (
-    <section
-      className="card"
-      style={{
-        marginBottom: '1rem',
-        borderColor: table.status === 'unchanged' ? 'var(--border)' : marker.color,
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <h2 className="mono" style={{ margin: 0, fontSize: '1.05rem' }}>
+    <div className="diff-file" style={nested ? { border: 'none', borderRadius: 0, marginBottom: 0 } : undefined}>
+      <div className="diff-file-header">
+        <span className="diff-file-name">
           {table.renamedFrom ? (
             <>
-              <span style={{ color: 'var(--text-dim)', textDecoration: 'line-through' }}>{table.renamedFrom}</span>
+              <span className="text-dim" style={{ textDecoration: 'line-through' }}>{table.renamedFrom}</span>
               <span style={{ margin: '0 0.4rem' }}>→</span>
               {table.name}
             </>
           ) : (
             table.name
           )}
-        </h2>
-        {table.status !== 'unchanged' && (
-          <span className="pill" style={{ color: marker.color, border: `1px solid ${marker.color}` }}>
-            table {marker.label}
+        </span>
+        {badge && (
+          <span className="pill" style={{ color: badge.color, border: `1px solid ${badge.color}` }}>
+            {badge.label}
           </span>
         )}
-        <span className="text-dim" style={{ marginLeft: 'auto', fontSize: '0.85rem' }}>
-          {table.changeCount} change{table.changeCount === 1 ? '' : 's'}
-        </span>
+        <Stat added={added} removed={removed} />
       </div>
-      <TableBody table={table} />
-    </section>
+
+      <div className="diff-body">
+        {lines.map((line, i) => (
+          <Line key={i} line={line} />
+        ))}
+      </div>
+    </div>
   );
 }
 
-function TableBody({ table }: { table: TableDiff }) {
+function Line({ line }: { line: DiffLine }) {
+  if (line.kind === 'hunk') {
+    return <div className="diff-hunk">{line.text}</div>;
+  }
+
+  const sign = line.kind === 'add' ? '+' : line.kind === 'del' ? '−' : ' ';
+  const status = line.kind === 'add' ? 'added' : line.kind === 'del' ? 'removed' : 'unchanged';
+
   return (
     <>
-      <Section title="Columns" rows={table.columns} />
-      <Section title="Constraints" rows={table.constraints} />
-      <Section title="Indexes" rows={table.indexes} />
+      <div className={`diff-line diff-line--${line.kind}`}>
+        <span className="diff-num">{line.beforeNo ?? ''}</span>
+        <span className="diff-num">{line.afterNo ?? ''}</span>
+        <span className="diff-code">
+          {/* The sign is decorative — the status is announced as text so the
+              diff never depends on colour alone. */}
+          <span className="diff-sign" aria-hidden>{sign}</span>
+          <span className="sr-only">{status}: </span>
+          {line.text}
+        </span>
+      </div>
+      {line.notes.map((note, i) => (
+        <div className="diff-note" key={i}>{note}</div>
+      ))}
     </>
   );
 }
 
-function Section<T>({ title, rows }: { title: string; rows: DiffRow<T>[] }) {
-  if (rows.length === 0) return null;
+function Stat({ added, removed }: { added: number; removed: number }) {
   return (
-    <div style={{ marginBottom: '0.6rem' }}>
-      <div className="text-dim" style={{ fontSize: '0.8rem', margin: '0.4rem 0 0.2rem' }}>{title}</div>
-      {rows.map((row) => (
-        <Row key={row.id} row={row} />
-      ))}
-    </div>
-  );
-}
-
-function Row<T>({ row }: { row: DiffRow<T> }) {
-  // A replaced row shows both sides, the way a line diff does. Everything
-  // else is a single line carrying whichever side exists.
-  if (row.status === 'modified' && row.beforeLabel && row.afterLabel) {
-    return (
-      <div>
-        <Line glyph="−" color="var(--danger)" background="var(--del-bg)" text={row.beforeLabel} srLabel="before" />
-        <Line glyph="+" color="var(--safe)" background="var(--add-bg)" text={row.afterLabel} srLabel="after" />
-        <Notes notes={row.notes} />
-      </div>
-    );
-  }
-
-  const marker = MARKER[row.status];
-  const text = row.afterLabel ?? row.beforeLabel ?? '';
-  const background =
-    row.status === 'added' ? 'var(--add-bg)' : row.status === 'dropped' ? 'var(--del-bg)' : 'transparent';
-
-  return (
-    <div>
-      <Line
-        glyph={marker.glyph}
-        color={marker.color}
-        background={background}
-        text={text}
-        dim={row.status === 'unchanged'}
-        srLabel={marker.label}
-      />
-      <Notes notes={row.notes} />
-    </div>
-  );
-}
-
-function Line({
-  glyph,
-  color,
-  background,
-  text,
-  dim,
-  srLabel,
-}: {
-  glyph: string;
-  color: string;
-  background: string;
-  text: string;
-  dim?: boolean;
-  srLabel: string;
-}) {
-  return (
-    <div
-      className="mono"
-      style={{
-        display: 'flex',
-        gap: '0.6rem',
-        background,
-        padding: '0.15rem 0.4rem',
-        borderRadius: '3px',
-        fontSize: '0.85rem',
-        color: dim ? 'var(--text-dim)' : 'var(--text)',
-      }}
-    >
-      {/* The glyph is decorative; the status is announced in text so the diff
-          never depends on colour alone. */}
-      <span aria-hidden style={{ color, fontWeight: 700, width: '1ch', flexShrink: 0 }}>{glyph}</span>
-      <span className="sr-only">{srLabel}: </span>
-      <span style={{ whiteSpace: 'pre-wrap' }}>{text}</span>
-    </div>
-  );
-}
-
-function Notes({ notes }: { notes: string[] }) {
-  if (notes.length === 0) return null;
-  return (
-    <ul className="text-dim" style={{ margin: '0.15rem 0 0.35rem 2rem', padding: 0, fontSize: '0.8rem', listStyle: 'none' }}>
-      {notes.map((note, i) => (
-        <li key={i}>{note}</li>
-      ))}
-    </ul>
+    <span className="diff-stat">
+      <span className="add">+{added}</span> <span className="del">−{removed}</span>
+    </span>
   );
 }

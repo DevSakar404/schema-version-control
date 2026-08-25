@@ -9,10 +9,14 @@
   --warning: #d9a441;
   --safe: #4caf7d;
   --blocking: #b98aff;
-  /* Diff row tints. Deliberately faint — the marker and label carry the
-     meaning; the tint only groups a row visually. */
-  --add-bg: rgba(76, 175, 125, 0.12);
-  --del-bg: rgba(224, 93, 93, 0.12);
+  /* Diff tints, following the convention a code-review diff has trained
+     everyone on: a faint wash across the line, a stronger one behind the
+     line-number gutter so the eye can track the changed side. */
+  --diff-add-bg: rgba(46, 160, 67, 0.15);
+  --diff-add-gutter: rgba(46, 160, 67, 0.30);
+  --diff-del-bg: rgba(248, 81, 73, 0.15);
+  --diff-del-gutter: rgba(248, 81, 73, 0.30);
+  --diff-hunk-bg: rgba(56, 139, 253, 0.10);
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
@@ -118,4 +122,98 @@ input:focus, select:focus, textarea:focus {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+/* ------------------------------------------------------------ diff view */
+
+.diff-file {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  margin-bottom: 1rem;
+}
+
+.diff-file-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+}
+
+.diff-file-name {
+  font-family: var(--mono);
+  font-weight: 600;
+}
+
+.diff-stat {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.diff-stat .add { color: var(--safe); }
+.diff-stat .del { color: var(--danger); }
+
+/* Horizontal scrolling belongs to the code area alone — a long constraint
+   definition must never make the whole page scroll sideways. */
+.diff-body { overflow-x: auto; }
+
+.diff-line {
+  display: grid;
+  grid-template-columns: 3rem 3rem 1fr;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  line-height: 1.7;
+  min-width: max-content;
+}
+
+.diff-num {
+  text-align: right;
+  padding: 0 0.6rem;
+  color: var(--text-dim);
+  opacity: 0.55;
+  user-select: none;
+}
+
+.diff-code {
+  padding: 0 1rem 0 0.25rem;
+  white-space: pre;
+}
+
+.diff-sign {
+  display: inline-block;
+  width: 1ch;
+  margin-right: 0.6rem;
+  font-weight: 700;
+}
+
+.diff-line--add { background: var(--diff-add-bg); }
+.diff-line--add .diff-num { background: var(--diff-add-gutter); opacity: 0.85; }
+.diff-line--add .diff-sign { color: var(--safe); }
+
+.diff-line--del { background: var(--diff-del-bg); }
+.diff-line--del .diff-num { background: var(--diff-del-gutter); opacity: 0.85; }
+.diff-line--del .diff-sign { color: var(--danger); }
+
+.diff-line--context .diff-code { color: var(--text-dim); }
+
+.diff-hunk {
+  background: var(--diff-hunk-bg);
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.9;
+  padding-left: 6.25rem;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+/* Sits under the line it explains, aligned with the code column. */
+.diff-note {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  padding: 0.05rem 1rem 0.05rem 6.85rem;
 }

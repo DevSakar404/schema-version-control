@@ -211,3 +211,91 @@ function renderPredicate(expression: Expression, schema: Schema): string {
 function nameOfColumn(schema: Schema, columnId: Id): string {
   return findColumn(schema, columnId)?.column.name ?? columnId;
 }
+
+/* -------------------------------------------------- rendered diff lines */
+
+export type DiffLineKind = 'hunk' | 'context' | 'add' | 'del';
+
+/**
+ * A table's rows flattened into numbered diff lines, the shape a code-review
+ * diff actually renders: two line-number gutters, a +/-/space marker, and the
+ * text.
+ *
+ * Numbering runs continuously down the whole table rather than restarting per
+ * section, because the table is the "file" here — the sections are hunks
+ * within it. A replaced row consumes one number on each side (a `del` line
+ * and an `add` line), exactly like a changed line in a text diff.
+ *
+ * Lives in core rather than the component because off-by-one errors in line
+ * numbering are easy to introduce and invisible on inspection.
+ */
+export interface DiffLine {
+  kind: DiffLineKind;
+  beforeNo: number | null;
+  afterNo: number | null;
+  text: string;
+  notes: string[];
+}
+
+export function toDiffLines(table: TableDiff): DiffLine[] {
+  const lines: DiffLine[] = [];
+  let beforeNo = 0;
+  let afterNo = 0;
+
+  const sections: [string, DiffRow<unknown>[]][] = [
+    ['columns', table.columns],
+    ['constraints', table.constraints],
+    ['indexes', table.indexes],
+  ];
+
+  for (const [name, rows] of sections) {
+    if (rows.length === 0) continue;
+
+    lines.push({
+      kind: 'hunk',
+      beforeNo: null,
+      afterNo: null,
+      text: `@@ -${rows.filter((r) => r.before).length} +${rows.filter((r) => r.after).length} @@ ${name}`,
+      notes: [],
+    });
+
+    for (const row of rows) {
+      // A replaced row renders as two lines. Anything else is one.
+      if (row.status === 'modified' && row.beforeLabel && row.afterLabel) {
+        lines.push({ kind: 'del', beforeNo: ++beforeNo, afterNo: null, text: row.beforeLabel, notes: [] });
+        lines.push({ kind: 'add', beforeNo: null, afterNo: ++afterNo, text: row.afterLabel, notes: row.notes });
+        continue;
+      }
+      if (row.status === 'added' && row.afterLabel) {
+        lines.push({ kind: 'add', beforeNo: null, afterNo: ++afterNo, text: row.afterLabel, notes: row.notes });
+        continue;
+      }
+      if (row.status === 'dropped' && row.beforeLabel) {
+        lines.push({ kind: 'del', beforeNo: ++beforeNo, afterNo: null, text: row.beforeLabel, notes: row.notes });
+        continue;
+      }
+      // Unchanged. Note that beforeLabel and afterLabel can still DIFFER here
+      // — an untouched constraint renders with a renamed column's new name —
+      // but the entity itself did not change, so it stays context rather than
+      // being reported as a modification it isn't. The current state is what
+      // a reader wants on a context line.
+      lines.push({
+        kind: 'context',
+        beforeNo: ++beforeNo,
+        afterNo: ++afterNo,
+        text: row.afterLabel ?? row.beforeLabel ?? '',
+        notes: row.notes,
+      });
+    }
+  }
+
+  return lines;
+}
+
+/** Added and removed line counts, for a `+N −M` stat. */
+export function diffStat(lines: DiffLine[]): { added: number; removed: number } {
+  return {
+    added: lines.filter((l) => l.kind === 'add').length,
+    removed: lines.filter((l) => l.kind === 'del').length,
+  };
+}
