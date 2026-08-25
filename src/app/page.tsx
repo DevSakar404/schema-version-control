@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { listProjects } from '@/db/projects';
 import { SeedButton } from '@/components/SeedButton';
+import { NewProjectForm } from '@/components/NewProjectForm';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,6 +20,10 @@ export default async function Home() {
     <main className="page">
       <h1>Schema Version Control</h1>
       <p className="text-dim">Branch, diff, and merge for database schemas.</p>
+
+      <div style={{ marginTop: '1.5rem' }}>
+        <NewProjectForm />
+      </div>
 
       {projects.length === 0 ? (
         <div className="card" style={{ marginTop: '2rem' }}>

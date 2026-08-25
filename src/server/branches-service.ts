@@ -1,7 +1,7 @@
 import { BadRequest, NotFound, Conflicted, Unprocessable } from './http';
 import { getBranch, listBranches, advanceHead, createBranch } from '@/db/branches';
 import { getCommit, getCommitGraph, insertCommit } from '@/db/commits';
-import { getProject } from '@/db/projects';
+import { getProject, createProject, type ProjectRow } from '@/db/projects';
 import { aheadBehind, findMergeBase, type Commit } from '@/core/history';
 import { threeWayMerge, type Resolution, type MergeResult } from '@/core/merge';
 import { plan, renderMigration, type Statement } from '@/core/migrate';
@@ -9,10 +9,30 @@ import { diff, type Change } from '@/core/diff';
 import { buildDiffTree, type DiffTree } from '@/core/difftree';
 import { validate } from '@/core/validate';
 import { applyOps, type SchemaOp } from '@/core/ops';
+import { emptySchema } from '@/core/schema';
 import { nanoIdGen, type Id } from '@/core/ids';
 import type { Schema } from '@/core/schema';
 
 const DEFAULT_BRANCH = 'main';
+
+/** Create a project with an empty schema on its `main` branch, ready to edit. */
+export async function createNewProject(name: string): Promise<ProjectRow> {
+  const project = await createProject(name);
+
+  const root: Commit = {
+    id: nanoIdGen(),
+    projectId: project.id,
+    parentIds: [],
+    schema: emptySchema(),
+    message: 'Initial schema',
+    author: 'system',
+    createdAt: new Date().toISOString(),
+  };
+  await insertCommit(root);
+  await createBranch(project.id, DEFAULT_BRANCH, root.id);
+
+  return project;
+}
 
 export interface BranchSummary {
   id: Id;
