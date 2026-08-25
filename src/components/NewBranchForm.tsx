@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+import { Toast } from './Toast';
 
 interface BranchOption {
   id: string;
@@ -68,11 +69,7 @@ export function NewBranchForm({
       <button type="submit" className="btn btn-primary" disabled={pending || !name.trim()}>
         {pending ? 'Creating…' : 'New branch'}
       </button>
-      {error && (
-        <span style={{ color: 'var(--danger)' }} role="alert">
-          {error}
-        </span>
-      )}
+      {error && <Toast message={error} onDismiss={() => setError(null)} />}
     </form>
   );
 }

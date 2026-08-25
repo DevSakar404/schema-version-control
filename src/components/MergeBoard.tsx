@@ -13,6 +13,7 @@ import { useRouter } from 'next/navigation';
 import { ConflictCard } from './ConflictCard';
 import { HazardList } from './HazardList';
 import { MigrationPreview } from './MigrationPreview';
+import { Toast } from './Toast';
 import type { Resolution } from '@/core/merge';
 import type { MergePreview } from '@/server/branches-service';
 
@@ -114,15 +115,15 @@ export function MergeBoard({
         <button type="button" className="btn btn-primary" disabled={commitDisabled} onClick={commit} title={disabledReason}>
           {committing ? 'Merging…' : `Merge ${preview.source.name} into ${preview.target.name}`}
         </button>
-        {commitError && (
-          <span role="alert" style={{ color: 'var(--danger)', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-            {commitError.message}
-            {commitError.branchMoved && (
-              <button type="button" className="btn" onClick={refreshAfterMove}>Refresh</button>
-            )}
-          </span>
-        )}
       </div>
+
+      {commitError && (
+        <Toast
+          message={commitError.message}
+          action={commitError.branchMoved ? { label: 'Refresh', onClick: refreshAfterMove } : undefined}
+          onDismiss={() => setCommitError(null)}
+        />
+      )}
 
       {preview.conflicts.length > 0 && (
         <section style={{ marginBottom: '1.5rem' }}>

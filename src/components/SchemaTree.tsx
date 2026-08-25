@@ -14,6 +14,7 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { Toast } from './Toast';
 import { applyOps, type ConstraintPatch, type SchemaOp } from '@/core/ops';
 import { validate } from '@/core/validate';
 import { closureOf } from '@/core/closure';
@@ -129,17 +130,15 @@ export function SchemaTree({
         >
           {committing ? 'Committing…' : 'Commit'}
         </button>
-        {commitError && (
-          <span role="alert" style={{ color: 'var(--danger)', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-            {commitError.message}
-            {commitError.branchMoved && (
-              <button type="button" className="btn" onClick={() => router.refresh()}>
-                Refresh
-              </button>
-            )}
-          </span>
-        )}
       </div>
+
+      {commitError && (
+        <Toast
+          message={commitError.message}
+          action={commitError.branchMoved ? { label: 'Refresh', onClick: () => router.refresh() } : undefined}
+          onDismiss={() => setCommitError(null)}
+        />
+      )}
 
       {hazards.length > 0 && (
         <div className="card" style={{ marginBottom: '1.5rem', borderColor: errorHazards.length ? 'var(--danger)' : 'var(--warning)' }}>
