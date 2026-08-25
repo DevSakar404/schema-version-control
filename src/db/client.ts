@@ -11,26 +11,43 @@ import postgres from 'postgres';
  */
 export type Db = postgres.Sql;
 
-let client: Db | null = null;
+/**
+ * Stashed on `globalThis`, not a plain module-scope variable.
+ *
+ * In Next.js dev mode, webpack HMR re-executes this module on nearly every
+ * save that touches its dependency graph — a module-scope `let client` resets
+ * to null in the new instance, but the OLD instance's live pool (up to `max`
+ * connections each) is never closed, since nothing calls `.end()` on it. Over
+ * a long editing session that leaks a handful of connections per reload,
+ * eventually exhausting a low connection ceiling with an error that looks
+ * like normal load rather than a leak. `globalThis` survives module
+ * re-execution, so HMR reuses the same pool instead of abandoning it — the
+ * same pattern Prisma's and Drizzle's own Next.js docs prescribe for this
+ * exact failure mode. It's also just the correct singleton pattern outside
+ * dev mode, so there's no environment check needed here.
+ */
+const globalForDb = globalThis as unknown as { __schemaVersionControlDb?: Db };
 
 export function hasDatabase(): boolean {
   return Boolean(process.env.DATABASE_URL?.trim());
 }
 
 export function db(): Db {
-  if (client) return client;
+  if (globalForDb.__schemaVersionControlDb) return globalForDb.__schemaVersionControlDb;
   const url = process.env.DATABASE_URL?.trim();
   if (!url) {
     throw new Error('DATABASE_URL is not set. Copy .env.example to .env and fill it in.');
   }
-  client = postgres({ ...parseConnectionUrl(url), ssl: 'require', prepare: false, max: 5 });
-  return client;
+  globalForDb.__schemaVersionControlDb = postgres({
+    ...parseConnectionUrl(url), ssl: 'require', prepare: false, max: 5,
+  });
+  return globalForDb.__schemaVersionControlDb;
 }
 
 /** Close the pool. Used by tests; the app leaves it open for reuse. */
 export async function closeDb(): Promise<void> {
-  await client?.end({ timeout: 5 });
-  client = null;
+  await globalForDb.__schemaVersionControlDb?.end({ timeout: 5 });
+  globalForDb.__schemaVersionControlDb = undefined;
 }
 
 interface ConnectionOptions {
