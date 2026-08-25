@@ -1122,6 +1122,26 @@ exist`), so they fail the test the three above pass: an error is only worth
 rewriting when it does not contain the word you would search for. Rewriting
 one that does just puts my phrasing between the reader and a working search.
 
+**The follow-up, which is the more interesting half.** The teammate applied
+the fix and got *the identical error*. The cause was precedence: a real
+environment variable beats the `.env` file, and Next.js loads `.env.local`
+ahead of `.env`, so an edit to the file you were told to edit can change
+nothing at all — silently, with no diff in the output to suggest the edit was
+ignored rather than wrong. This project's own loader caused it, via a
+`!process.env[key]` guard written to make CI work.
+
+The guard is correct and stayed. What changed is that it no longer does it
+quietly: `db:migrate` compares what the file said against what is actually in
+use and warns when they differ, naming `unset DATABASE_URL` as the fix. The
+connection error grew a matching section — *already changed it and still
+seeing this?* — listing the three shadowing sources in precedence order.
+
+That is the same failure as D43's original in a new place: an error that was
+technically accurate and practically unactionable, because it described the
+value it received and not the reason that value was not the one you set. A
+message that tells you to do the thing you have already done twice is worse
+than no message, since it moves suspicion onto the part that is working.
+
 The wider point is that "setup a stranger can run in one shot" is not a
 documentation property. It is a property of what the software says when it
 fails, and it cannot be verified by the person who wrote the setup, because

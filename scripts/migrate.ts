@@ -17,11 +17,24 @@ if (!existsSync('.env')) {
   process.exit(1);
 }
 
+// A real environment variable wins over the file, which is the conventional
+// precedence and what CI depends on. The trap is that it wins SILENTLY: you
+// edit .env, rerun, and get the identical error from the value you thought
+// you just replaced. So record what the file said and say so below.
+const fromFile: Record<string, string> = {};
 for (const line of readFileSync('.env', 'utf8').split('\n')) {
   const m = /^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/i.exec(line);
-  if (m?.[1] && !process.env[m[1]]) {
-    process.env[m[1]] = (m[2] ?? '').trim().replace(/^["'](.*)["']$/, '$1');
-  }
+  if (!m?.[1]) continue;
+  fromFile[m[1]] = (m[2] ?? '').trim().replace(/^["'](.*)["']$/, '$1');
+  if (!process.env[m[1]]) process.env[m[1]] = fromFile[m[1]];
+}
+
+if (fromFile.DATABASE_URL && fromFile.DATABASE_URL !== process.env.DATABASE_URL) {
+  console.warn(
+    'WARNING: your .env sets DATABASE_URL, but an exported shell variable of\n' +
+    'the same name takes precedence and is being used instead. Editing .env\n' +
+    'will have no effect until you run:  unset DATABASE_URL\n',
+  );
 }
 
 const url = process.env.DATABASE_URL?.trim();

@@ -155,7 +155,13 @@ Fix it in three steps:
   3. Put that string in DATABASE_URL (keep your password), then re-run.
 
 The pooler is reachable over IPv4. This is the same reason the deployed app
-uses it; decisions.md D41 has the full story.`;
+uses it; decisions.md D41 has the full story.
+
+Already changed it and still seeing this? Then the value above is not coming
+from the file you edited. In precedence order, check:
+  1. an exported shell variable  ->  unset DATABASE_URL
+  2. .env.local, which Next.js loads ahead of .env
+  3. a .env in a different directory than the one you are running from`;
 }
 
 /** Host of a connection URL, or undefined if it is absent or unparseable. */
