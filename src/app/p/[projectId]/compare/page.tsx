@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 import { compareBranches } from '@/server/branches-service';
 import { getBranch } from '@/db/branches';
 import { getProject } from '@/db/projects';
-import { ChangeRow } from '@/components/ChangeRow';
+import { SchemaDiffTree } from '@/components/SchemaDiffTree';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,8 +24,7 @@ export default async function ComparePage({ params, searchParams }: Props) {
   ]);
   if (!project || !base || !head || base.projectId !== projectId || head.projectId !== projectId) notFound();
 
-  const { groups, headSchema } = await compareBranches(baseId, headId);
-  const totalChanges = groups.reduce((n, g) => n + g.changes.length, 0);
+  const { tree } = await compareBranches(baseId, headId);
 
   return (
     <main className="page">
@@ -38,7 +37,7 @@ export default async function ComparePage({ params, searchParams }: Props) {
         <span className="mono">{head.name}</span>
       </h1>
 
-      {totalChanges === 0 ? (
+      {tree.totalChanges === 0 ? (
         <div className="card">
           <p style={{ margin: 0 }}>These branches are identical.</p>
           <p className="text-dim" style={{ margin: '0.4rem 0 0' }}>
@@ -48,20 +47,7 @@ export default async function ComparePage({ params, searchParams }: Props) {
         </div>
       ) : (
         <>
-          <p className="text-dim">
-            {totalChanges} change{totalChanges === 1 ? '' : 's'} across {groups.length} table
-            {groups.length === 1 ? '' : 's'}.
-          </p>
-          {groups.map((group) => (
-            <section key={group.table?.id ?? '(unresolved)'} className="card" style={{ marginBottom: '1rem' }}>
-              <h2 className="mono" style={{ margin: '0 0 0.25rem', fontSize: '1.05rem' }}>
-                {group.table?.name ?? 'unresolved'}
-              </h2>
-              {group.changes.map((change, i) => (
-                <ChangeRow key={i} change={change} schema={headSchema} />
-              ))}
-            </section>
-          ))}
+          <SchemaDiffTree tree={tree} />
           <div style={{ marginTop: '1.5rem' }}>
             <Link className="btn btn-primary" href={`/p/${projectId}/merge?target=${baseId}&source=${headId}`}>
               Merge {head.name} into {base.name}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { diff, describeChange, tableOf, type Change } from '@/core/diff';
+import { diff, describeChange, type Change } from '@/core/diff';
 import { applyOp, applyOps, type SchemaOp } from '@/core/ops';
 import { emptySchema, type Schema } from '@/core/schema';
 import { counterIdGen } from '@/core/ids';
@@ -133,52 +133,6 @@ describe('describeChange', () => {
     const text = describeChange(changes[0]!);
     expect(text).toContain('email');
     expect(text).toContain('contact_email');
-  });
-});
-
-describe('tableOf — resolving a change back to its table', () => {
-  it('table_* changes resolve to the table itself', () => {
-    const { s } = base();
-    const { changes, ids } = after([{ kind: 'rename_table', tableId: 'x1', name: 'accounts' }]);
-    const head = { ...s, tables: [{ ...s.tables[0]!, name: 'accounts' }] };
-    expect(tableOf(changes[0]!, s, head)).toEqual({ id: ids.users, name: 'accounts' });
-  });
-
-  it('column_* changes resolve via the tableId they carry', () => {
-    const { s } = base();
-    const { changes } = after([{ kind: 'rename_column', columnId: 'x2', name: 'contact_email' }]);
-    expect(tableOf(changes[0]!, s, s)?.name).toBe('users');
-  });
-
-  it('constraint_added resolves via the constraint object it carries', () => {
-    const { s, ids } = base();
-    const head = applyOp(s, { kind: 'add_constraint', constraint: { name: 'x', tableId: ids.users!, kind: 'unique', columnIds: [ids.uemail!] } }, gen());
-    const change = diff(s, head)[0]!;
-    expect(tableOf(change, s, head)?.name).toBe('users');
-  });
-
-  it('constraint_dropped resolves via the BASE schema, since the constraint is gone from head', () => {
-    const { s } = base();
-    const head = applyOp(s, { kind: 'drop_constraint', constraintId: 'x4' }, gen());
-    const change = diff(s, head)[0]!;
-    expect(change.kind).toBe('constraint_dropped');
-    expect(tableOf(change, s, head)?.name).toBe('users');
-  });
-
-  it('index_dropped resolves via the BASE schema', () => {
-    const { s } = base();
-    const head = applyOp(s, { kind: 'drop_index', indexId: 'x5' }, gen());
-    const change = diff(s, head)[0]!;
-    expect(change.kind).toBe('index_dropped');
-    expect(tableOf(change, s, head)?.name).toBe('users');
-  });
-
-  it('constraint_changed resolves via `to`, without needing either schema', () => {
-    const { s } = base();
-    const head = applyOp(s, { kind: 'alter_constraint', constraintId: 'x4', patch: { columnIds: ['x3'] } }, gen());
-    const change = diff(s, head)[0]!;
-    expect(change.kind).toBe('constraint_changed');
-    expect(tableOf(change, emptySchema(), emptySchema())?.id).toBe('x1');
   });
 });
 

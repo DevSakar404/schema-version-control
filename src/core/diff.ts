@@ -1,7 +1,6 @@
 import type { Id } from './ids';
 import {
   findColumn,
-  findTable,
   sameType,
   type Column,
   type ColumnType,
@@ -51,36 +50,6 @@ export function subjectOf(change: Change): Id {
  * Merge pairs changes by (subject, attribute), so two edits to different
  * attributes of one entity never collide.
  */
-/**
- * The table a change belongs to, for grouping a diff or migration by table.
- *
- * Most Change kinds carry a `tableId` directly. The two that don't —
- * `constraint_dropped` and `index_dropped` — only carry the dropped entity's
- * own id and name, because by the time the change exists the entity is gone
- * from the head schema. Its owning table is still findable in `base`, where
- * it existed a moment ago. `constraint_changed` / `index_changed` carry
- * `to.tableId` directly, since `tableId` isn't patchable (D21) — the table
- * cannot have changed underneath the constraint.
- */
-export function tableOf(change: Change, base: Schema, head: Schema): { id: Id; name: string } | undefined {
-  const tableId = tableIdOf(change, base);
-  if (!tableId) return undefined;
-  const table = findTable(head, tableId) ?? findTable(base, tableId);
-  return table ? { id: table.id, name: table.name } : { id: tableId, name: tableId };
-}
-
-function tableIdOf(change: Change, base: Schema): Id | undefined {
-  if ('tableId' in change) return change.tableId;
-  switch (change.kind) {
-    case 'constraint_added': return change.constraint.tableId;
-    case 'constraint_changed': return change.to.tableId;
-    case 'constraint_dropped': return base.constraints.find((c) => c.id === change.constraintId)?.tableId;
-    case 'index_added': return change.index.tableId;
-    case 'index_changed': return change.to.tableId;
-    case 'index_dropped': return base.indexes.find((i) => i.id === change.indexId)?.tableId;
-  }
-}
-
 export function attributeOf(change: Change): string {
   switch (change.kind) {
     case 'table_created':
