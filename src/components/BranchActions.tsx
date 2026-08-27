@@ -35,7 +35,11 @@ export function BranchActions({
   return (
     <span style={{ display: 'inline-flex', gap: '0.4rem', alignItems: 'center' }}>
       <span className="text-dim" style={{ fontSize: '0.8rem' }}>vs</span>
-      <select value={againstId} onChange={(e) => setAgainstId(e.target.value)} style={{ fontSize: '0.8rem' }}>
+      <select
+        value={againstId}
+        onChange={(e) => setAgainstId(e.target.value)}
+        style={{ fontSize: '0.8rem', width: '9rem', textOverflow: 'ellipsis' }}
+      >
         {others.map((o) => (
           <option key={o.id} value={o.id}>{o.name}</option>
         ))}
