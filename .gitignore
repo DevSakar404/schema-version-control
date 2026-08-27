@@ -1,5 +1,6 @@
 node_modules/
 .next/
+.claude/worktrees/
 out/
 build/
 coverage/
