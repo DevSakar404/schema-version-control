@@ -1149,20 +1149,139 @@ they already know the answer. It took a second machine to find this.
 
 ---
 
+---
+
+## Day 6 — post-deployment: the gaps a deployed URL made obvious
+
+### D44. Projects can be created from the UI
+
+**Chose:** `POST /api/projects` plus a `NewProjectForm` on the home page,
+backed by a `createNewProject` service that writes the project, an initial
+empty-schema commit, and a `main` branch pointing at it.
+
+**The gap:** there was no way to create a project at all. `createProject`
+existed in `src/db/projects.ts` from Task 14 and was called by exactly one
+thing — the demo seeder. No API route, no service function, no form. Every
+screen in the product assumed a project already existed, because for the
+entire build one always had: the seeder made it before anyone looked.
+
+**Reasoning:** this is D40's shape a second time — a feature reachable only
+by the path the builder happened to walk. The plan's Task 15 lists the API
+routes from `design.md` §11 and project creation is not among them, so this
+is not a route that was dropped; it is one the design never specified,
+because the design's own first-run story (D16) starts from a seeded project
+and never asks where the *second* one comes from. Three writes rather than
+one: a project whose `main` branch has no commit is a broken state every
+downstream screen would have to defend against, so the service creates the
+root commit and the branch in the same call rather than leaving a
+half-built project reachable.
+
+**Accepted tradeoff:** the three writes are not in a transaction. A failure
+between them leaves a project with no branch, which no screen renders well.
+The honest fix is a transaction; it is not written because `postgres`'s
+transaction API would be the first use of it in this codebase and the
+failure needs a second decision about what the UI should do with a
+half-built project it finds. Logged rather than left to be discovered.
+
+### D45. Primary keys are created where columns are
+
+**Chose:** a new table is created with an `id int` primary key already on
+it, and "Add column" carries a **primary key** checkbox (shown only while
+the table has no primary key) that forces `NOT NULL` and adds the
+constraint in the same action.
+
+**The gap:** creating a table produced a table with zero columns and no
+primary key, and the only way to add one was the Constraints section —
+choose `primary key` from a select, type a *constraint* name, then tick
+the column it covers. The field asking for a constraint name sits exactly
+where someone intending to type a column name will type one, and the
+validator's `Table 'x' has no primary key` warning fires immediately and
+stays until all three steps are done correctly.
+
+**Reasoning:** the editor was built (Task 17) as a faithful surface over
+the fifteen `SchemaOp` kinds, one control per operation. That is the right
+structure for the operations that are genuinely distinct and the wrong one
+for the single most common thing anyone does to a new table, which is one
+intention — "this table is keyed by id" — spread across three operations
+by an accident of how the data model decomposes. The ops are unchanged;
+this only batches them behind one control. `add()` grew an `addBatch()`
+sibling so the batch raises one toast instead of three, since the existing
+per-op toast is what would otherwise make one intention look like three
+edits in the uncommitted-changes count.
+
+**Deliberately cut:** making the seeded `id` column configurable — its
+type, its name, whether it appears at all. A table that needs something
+else can drop it; a checkbox for it would be a settings surface in front
+of a two-second undo.
+
+### D46. The Reset demo button was removed, which reopens D42
+
+**Chose:** removed, and recorded here rather than left as a silent
+contradiction — because D42 depends on it.
+
+D42 accepted no authentication on a public URL, and the reasoning rested
+on one mitigation: nothing on the deployed instance is destructible,
+because commits are append-only (D5) and **Reset demo** restores all three
+seeded scenarios to their exact initial state. "Just reset it" was
+described there as a legitimate answer *only because the data model made
+it one*.
+
+The button is now gone from the project page. `SeedButton` still exists,
+but the only place that renders it is the home page's empty state, which
+requires zero projects — and on the deployed instance the demo project
+always exists, so it never renders. `POST /api/seed` is untouched and
+still works, so recovery is one `curl` away for someone who knows the
+route exists, which is not the same as an affordance for a reviewer who
+does not.
+
+**What this costs:** D42's tradeoff was stated as "two reviewers can
+confuse each other, and a mid-merge reset is visible to the other as state
+changing underneath them." Without the button the second half is gone and
+the first half has no remedy: a reviewer who breaks the demo while
+exploring now has no way back, which is the exact scenario the seed was
+made idempotent for (Task 20, Step 6 — "a visible 'reset demo' action so a
+reviewer who breaks it can recover without redeploying").
+
+**Resolved: the button is back.** Left open for about a day, and the demo
+answered it in the meantime — a stray `feature` branch, created by someone
+testing the New branch form, was sitting at the top of the deployed
+project page with no way to clear it from the UI. That is precisely the
+case Task 20 Step 6 put the button there for, arriving before anyone had
+to argue about it. Restored on the demo project's page, where it was.
+
+**What this cost, and the general form of it.** Three commits: the removal,
+a build failure from the imports it orphaned (`next build` treats unused
+imports as an error, so the deploy broke), and the restore. The removal
+itself was never argued for — it turned up as an already-staged edit
+nobody claimed, was flagged, and got committed on the strength of "push it
+as well." A decision that is load-bearing for another decision (D42's
+entire no-authentication case rests on this button) should not be
+reachable by an edit nobody remembers making. The log is what caught it:
+writing D46 down is what turned "a button is gone" into "D42 no longer
+holds."
+
+---
+
 ## Closing state
 
-289 tests pass; 19 database-backed tests skip themselves when `DATABASE_URL`
+309 tests pass; 20 database-backed tests skip themselves when `DATABASE_URL`
 is unset, so a clone with no Supabase project still runs the entire pure
 `core/` suite clean.
 
-43 decisions logged: 18 before any code existed, 7 from the design review that
+46 decisions logged: 18 before any code existed, 7 from the design review that
 found the design wrong in seven places (D19–D25), 15 from implementation and
-live use, 2 from deployment, and D43 from watching someone else's first run
-fail. The ones worth
+live use, 2 from deployment, D43 from watching someone else's first run
+fail, and 3 (D44–D46) from using the deployed build. The ones worth
 reading first, if this file is read out of order, are **D19** (delete/modify
 has to be transitive over containment, or merge silently discards a
 colleague's work), **D20** (renames need a cycle break, and the foreign-key
 reasoning that looked identical was the wrong tool), and **D38** (the most
 serious bug in the build, found by clicking rather than by testing).
 
+D46 is worth reading alongside D42: the Reset demo button was removed,
+which silently invalidated the mitigation D42's no-authentication decision
+rests on, and writing the entry is what surfaced that. The button is
+restored; the entry stays, because the failure it records is a process one.
+
 The live URL is in [README.md](README.md).
+

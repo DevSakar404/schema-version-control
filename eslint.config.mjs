@@ -3,7 +3,7 @@ import tseslint from 'typescript-eslint';
 import reactHooks from 'eslint-plugin-react-hooks';
 
 export default tseslint.config(
-  { ignores: ['node_modules/**', '.next/**', 'next-env.d.ts'] },
+  { ignores: ['node_modules/**', '.next/**', 'next-env.d.ts', '.claude/**', '.worktrees/**'] },
   {
     rules: {
       // Allow the destructure-to-omit idiom: `const { secret: _secret, ...rest }`.

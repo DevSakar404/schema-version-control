@@ -14,15 +14,18 @@ Row data is out of scope. The artifact under version control is the schema.
 
 ## Status
 
-**Built. 289 tests passing.**
+**Built. 309 tests passing.**
 
-**Live:** <!-- DEPLOY_URL --> _(fill in after `vercel --prod`)_
+**Live:** https://schema-version-control.vercel.app — start at
+[the seeded demo](https://schema-version-control.vercel.app/p/demo), where
+three branch pairs are already diverged and one click from a merge.
 
 **Repo:** https://github.com/DevSakar404/schema-version-control
 
 | Document | What it covers |
 | --- | --- |
-| [decisions.md](decisions.md) | Every real call made, with the alternatives rejected and the tradeoffs accepted — 43 entries, running through deployment |
+| [docs/engineering-notes.md](docs/engineering-notes.md) | **Start here** — what to read in `src/core/`, the three problems that were actually hard, and the parts that are weak |
+| [decisions.md](decisions.md) | Every real call made, with the alternatives rejected and the tradeoffs accepted — 49 entries, running through deployment |
 | [design.md](design.md) | The specification — data model, algorithms, taxonomies, API, screens, testing |
 | [docs/implementation-plan.md](docs/implementation-plan.md) | 21 tasks over 5 days, each with file paths, interface contracts, and test assertions |
 
@@ -64,14 +67,18 @@ npm run dev           # http://localhost:3000
 
 The home page seeds itself on first visit — click **Seed the demo** and a
 realistic six-table schema with three diverged branch pairs appears
-immediately. A **Reset demo** button on the project page restores it to that
-same state at any point, so nothing you do while exploring the editor can
-break the demo permanently.
+immediately. You can also create your own empty project from the same page
+(D44).
+
+Seeding is a full reset rather than an upsert, and a **Reset demo** button
+sits on the demo project's page, so nothing you do while exploring the
+editor breaks the demo permanently (D42, and D46 for the round trip that
+briefly removed the button).
 
 **Tests:**
 
 ```bash
-npm test          # 289 tests. Core suite needs no database at all.
+npm test          # 309 tests. Core suite needs no database at all.
 npm run typecheck
 npm run lint
 ```
@@ -79,7 +86,7 @@ npm run lint
 The database-backed tests (`tests/db/`) skip themselves automatically when
 `DATABASE_URL` is unset, so `npm test` runs clean on a machine with no
 Supabase project configured — only the pure `src/core/` suite runs, which is
-most of the 289.
+most of the 309.
 
 ---
 
@@ -208,9 +215,11 @@ tool cannot read is a rule it cannot protect.
 ## Stack
 
 Next.js 15 (App Router) · TypeScript strict · React 19 · Vitest · Supabase
-Postgres · deployed on Vercel. Styling is a small hand-written stylesheet, not
-a framework — the rubric this was built against explicitly doesn't score
-visual polish, so a dependency for it wasn't worth adding (D31).
+Postgres · deployed on Vercel. Five runtime dependencies, all of them load
+bearing: `next`, `react`, `react-dom`, `postgres`, `nanoid`. Styling is a
+small hand-written stylesheet, not a framework — the rubric this was built
+against explicitly doesn't score visual polish, so a dependency for it
+wasn't worth adding (D31).
 
 The `src/core/` layer — diff, merge, validate, plan — is pure: no database, no
 React, no I/O of any kind. That boundary is enforced by an ESLint rule and a
