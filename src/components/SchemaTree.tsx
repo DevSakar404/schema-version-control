@@ -70,6 +70,11 @@ export function SchemaTree({
 
   const add = (op: SchemaOp) => setOps((prev) => [...prev, op]);
 
+  // A handful of buttons queue more than one op as a single conceptual
+  // action (new table + its id column + the primary key on it). Queued as
+  // one batch so the uncommitted-changes count moves once, not three times.
+  const addBatch = (batch: SchemaOp[]) => setOps((prev) => [...prev, ...batch]);
+
   async function commit() {
     setCommitting(true);
     setCommitError(null);
@@ -101,9 +106,11 @@ export function SchemaTree({
 
   return (
     <div>
+      {/* Deliberately not sticky — it was, and pinning the commit bar over a
+          long table read as clutter rather than convenience. */}
       <div
         className="card"
-        style={{ position: 'sticky', top: '1rem', zIndex: 1, marginBottom: '1.5rem', display: 'flex', gap: '0.6rem', flexWrap: 'wrap', alignItems: 'center' }}
+        style={{ marginBottom: '1.5rem', display: 'flex', gap: '0.6rem', flexWrap: 'wrap', alignItems: 'center' }}
       >
         <strong className="mono">{branchName}</strong>
         <span className="text-dim">
@@ -157,7 +164,20 @@ export function SchemaTree({
         <TableSection key={table.id} table={table} schema={preview} onOp={add} />
       ))}
 
-      <AddTable onAdd={(name) => add({ kind: 'create_table', name, id: nanoIdGen() })} />
+      <AddTable
+        onAdd={(name) => {
+          // Every table starts with an `id` primary key — the one column
+          // every table needs, and the #1 thing people forgot to add by
+          // hand (design.md's own hazard list warns about it constantly).
+          const tableId = nanoIdGen();
+          const idColumnId = nanoIdGen();
+          addBatch([
+            { kind: 'create_table', name, id: tableId },
+            { kind: 'add_column', tableId, name: 'id', type: { kind: 'int' }, nullable: false, default: null, id: idColumnId },
+            { kind: 'add_constraint', constraint: { name: `${name}_pkey`, tableId, kind: 'primary_key', columnIds: [idColumnId] }, id: nanoIdGen() },
+          ]);
+        }}
+      />
     </div>
   );
 }
@@ -205,7 +225,11 @@ function TableSection({ table, schema, onOp }: { table: Table; schema: Schema; o
         </div>
       </div>
 
-      <ColumnList table={table} onOp={onOp} />
+      <ColumnList
+        table={table}
+        onOp={onOp}
+        hasPrimaryKey={schema.constraints.some((c) => c.tableId === table.id && c.kind === 'primary_key')}
+      />
       <ConstraintList table={table} schema={schema} onOp={onOp} />
       <IndexList table={table} schema={schema} onOp={onOp} />
     </section>
@@ -225,7 +249,14 @@ function AddTable({ onAdd }: { onAdd: (name: string) => void }) {
         setName('');
       }}
     >
-      <input placeholder="new-table-name" value={name} onChange={(e) => setName(e.target.value)} />
+      <input
+        placeholder="new-table-name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        required
+        minLength={3}
+        title="Table name must be at least 3 characters"
+      />
       <button type="submit" className="btn">Add table</button>
     </form>
   );
@@ -233,13 +264,21 @@ function AddTable({ onAdd }: { onAdd: (name: string) => void }) {
 
 /* ------------------------------------------------------------- columns */
 
-function ColumnList({ table, onOp }: { table: Table; onOp: (op: SchemaOp) => void }) {
+function ColumnList({
+  table,
+  onOp,
+  hasPrimaryKey,
+}: {
+  table: Table;
+  onOp: (op: SchemaOp) => void;
+  hasPrimaryKey: boolean;
+}) {
   return (
     <div style={{ marginBottom: '0.75rem' }}>
       {table.columns.map((column) => (
         <ColumnRow key={column.id} tableId={table.id} column={column} schema={{ tables: [table], constraints: [], indexes: [] }} onOp={onOp} />
       ))}
-      <AddColumn tableId={table.id} onOp={onOp} />
+      <AddColumn tableId={table.id} tableName={table.name} hasPrimaryKey={hasPrimaryKey} onOp={onOp} />
     </div>
   );
 }
@@ -343,10 +382,21 @@ function ColumnRow({
   );
 }
 
-function AddColumn({ tableId, onOp }: { tableId: string; onOp: (op: SchemaOp) => void }) {
+function AddColumn({
+  tableId,
+  tableName,
+  hasPrimaryKey,
+  onOp,
+}: {
+  tableId: string;
+  tableName: string;
+  hasPrimaryKey: boolean;
+  onOp: (op: SchemaOp) => void;
+}) {
   const [name, setName] = useState('');
   const [kind, setKind] = useState<ColumnType['kind']>('text');
   const [nullable, setNullable] = useState(true);
+  const [primaryKey, setPrimaryKey] = useState(false);
 
   return (
     <form
@@ -354,8 +404,15 @@ function AddColumn({ tableId, onOp }: { tableId: string; onOp: (op: SchemaOp) =>
       onSubmit={(e) => {
         e.preventDefault();
         if (!name.trim()) return;
-        onOp({ kind: 'add_column', tableId, name: name.trim(), type: defaultTypeFor(kind), nullable, default: null, id: nanoIdGen() });
+        const columnId = nanoIdGen();
+        // A primary key column can't be nullable — enforced here rather
+        // than trusting the (now disabled) checkbox's last value.
+        onOp({ kind: 'add_column', tableId, name: name.trim(), type: defaultTypeFor(kind), nullable: primaryKey ? false : nullable, default: null, id: columnId });
+        if (primaryKey) {
+          onOp({ kind: 'add_constraint', constraint: { name: `${tableName}_pkey`, tableId, kind: 'primary_key', columnIds: [columnId] }, id: nanoIdGen() });
+        }
         setName('');
+        setPrimaryKey(false);
       }}
     >
       <input placeholder="column name" value={name} onChange={(e) => setName(e.target.value)} style={{ width: '10rem' }} />
@@ -363,9 +420,15 @@ function AddColumn({ tableId, onOp }: { tableId: string; onOp: (op: SchemaOp) =>
         {KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
       </select>
       <label style={{ display: 'flex', gap: '0.3rem' }}>
-        <input type="checkbox" checked={nullable} onChange={(e) => setNullable(e.target.checked)} />
+        <input type="checkbox" checked={!primaryKey && nullable} disabled={primaryKey} onChange={(e) => setNullable(e.target.checked)} />
         <span className="text-dim">nullable</span>
       </label>
+      {!hasPrimaryKey && (
+        <label style={{ display: 'flex', gap: '0.3rem' }} title="Adds a primary key constraint on this column">
+          <input type="checkbox" checked={primaryKey} onChange={(e) => setPrimaryKey(e.target.checked)} />
+          <span className="text-dim">primary key</span>
+        </label>
+      )}
       <button type="submit" className="btn">Add column</button>
     </form>
   );
