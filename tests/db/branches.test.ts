@@ -2,7 +2,8 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { db, hasDatabase, closeDb, parseConnectionUrl, explainConnectionError } from '@/db/client';
 import { createProject } from '@/db/projects';
 import { insertCommit, getCommit, getCommitGraph } from '@/db/commits';
-import { advanceHead, createBranch, listBranches } from '@/db/branches';
+import { advanceHead, createBranch, listBranches, getBranch } from '@/db/branches';
+import { createNewProject } from '@/server/branches-service';
 import { emptySchema } from '@/core/schema';
 import { nanoIdGen } from '@/core/ids';
 import type { Commit } from '@/core/history';
@@ -187,5 +188,26 @@ describe.skipIf(!hasDatabase())('persistence', () => {
       const branches = await listBranches(projectId);
       expect(branches.find((x) => x.id === branch.id)?.headCommitId).toBe(winner.headCommitId);
     });
+  });
+});
+
+// Skips itself when DATABASE_URL is absent, same as `persistence` above.
+describe.skipIf(!hasDatabase())('createNewProject', () => {
+  it('creates a project with an empty schema on its main branch, ready to edit', async () => {
+    const project = await createNewProject('vitest new-project fixture');
+    try {
+      expect(project.name).toBe('vitest new-project fixture');
+
+      const branches = await listBranches(project.id);
+      expect(branches).toHaveLength(1);
+      expect(branches[0]!.name).toBe('main');
+
+      const main = await getBranch(branches[0]!.id);
+      const head = await getCommit(main!.headCommitId);
+      expect(head?.parentIds).toEqual([]);
+      expect(head?.schema).toEqual(emptySchema());
+    } finally {
+      await db()`delete from projects where id = ${project.id}`; // cascades to the commit and branch
+    }
   });
 });
