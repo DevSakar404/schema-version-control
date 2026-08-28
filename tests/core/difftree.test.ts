@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildDiffTree, toDiffLines, diffStat } from '@/core/difftree';
+import { buildDiffTree, toDiffLines, toSplitLines, diffStat } from '@/core/difftree';
 import { applyOps, type SchemaOp } from '@/core/ops';
 import { counterIdGen } from '@/core/ids';
 import { base } from './fixture';
@@ -246,6 +246,93 @@ describe('toDiffLines — numbered lines, the shape a code-review diff renders',
     const lines = toDiffLines(users(tree([{ kind: 'rename_column', columnId: 'c2', name: 'contact_email' }])));
     expect(lines.find((l) => l.kind === 'del')!.notes).toEqual([]);
     expect(lines.find((l) => l.kind === 'add')!.notes.join(' ')).toContain('Renamed');
+  });
+});
+
+describe('toSplitLines — the same rows, side by side instead of unified', () => {
+  it('a modified row lands on both sides of the SAME row, old on the left', () => {
+    const lines = toSplitLines(users(tree([{ kind: 'retype_column', columnId: 'c2', type: { kind: 'text' } }])));
+    const row = lines.find((l) => l.kind === 'row' && l.left?.no === 2)!;
+    expect(row.left).toEqual({ no: 2, text: 'email varchar(255) NOT NULL', changed: true });
+    expect(row.right).toEqual({ no: 2, text: 'email text NOT NULL', changed: true });
+  });
+
+  it('an added row has an empty left side', () => {
+    const lines = toSplitLines(users(tree([
+      { kind: 'add_column', tableId: 't1', name: 'nickname', type: { kind: 'text' }, nullable: true, default: null },
+    ])));
+    const row = lines.find((l) => l.kind === 'row' && l.right?.text === 'nickname text')!;
+    expect(row.left).toBeNull();
+    expect(row.right).toEqual({ no: 4, text: 'nickname text', changed: true });
+  });
+
+  it('a dropped row has an empty right side', () => {
+    const lines = toSplitLines(users(tree([{ kind: 'drop_column', columnId: 'c3' }])));
+    const row = lines.find((l) => l.kind === 'row' && l.left?.text === 'age int')!;
+    expect(row.right).toBeNull();
+    expect(row.left).toEqual({ no: 3, text: 'age int', changed: true });
+  });
+
+  it('an unchanged row shows the same text on both sides, unmarked', () => {
+    const lines = toSplitLines(users(buildDiffTree(base(), base())));
+    const row = lines.find((l) => l.kind === 'row' && l.left?.no === 1)!;
+    expect(row.left).toEqual({ no: 1, text: 'id int NOT NULL', changed: false });
+    expect(row.right).toEqual({ no: 1, text: 'id int NOT NULL', changed: false });
+  });
+
+  it('a dropped row immediately followed by an unrelated added row stays two separate rows, not one paired replacement', () => {
+    // The case toDiffLines' flat del/add adjacency would get wrong: these
+    // are two different entities that happen to land next to each other,
+    // not one thing that turned into another.
+    const next = counterIdGen('z');
+    let head = applyOps(base(), [{ kind: 'drop_column', columnId: 'c3' }], next);
+    head = applyOps(head, [
+      { kind: 'add_column', tableId: 't1', name: 'zzz_new', type: { kind: 'text' }, nullable: true, default: null },
+    ], next);
+
+    const lines = toSplitLines(users(buildDiffTree(base(), head))).filter((l) => l.kind === 'row');
+    const dropped = lines.find((l) => l.left?.text === 'age int')!;
+    const added = lines.find((l) => l.right?.text === 'zzz_new text')!;
+    expect(dropped.right).toBeNull();
+    expect(added.left).toBeNull();
+    expect(dropped).not.toBe(added);
+  });
+
+  it('numbers rows the same way toDiffLines numbers its two gutters, continuously across sections', () => {
+    const lines = toSplitLines(users(tree([
+      { kind: 'add_column', tableId: 't1', name: 'nickname', type: { kind: 'text' }, nullable: true, default: null },
+    ]))).filter((l) => l.kind === 'row');
+    // Columns: id(1,1) email(2,2) age(3,3) nickname(-,4) — the after side
+    // pulls ahead. Then the table's one constraint and one index continue
+    // the same two counters rather than restarting at the section boundary.
+    expect(lines.map((l) => [l.left?.no ?? null, l.right?.no ?? null])).toEqual([
+      [1, 1], [2, 2], [3, 3], [null, 4], [4, 5], [5, 6],
+    ]);
+  });
+
+  it('emits the same hunk headers as toDiffLines, per-side counts included', () => {
+    // Hunk generation is identical logic to toDiffLines' (same expression,
+    // duplicated rather than shared — see toSplitLines' own comment for
+    // why) — this is the counterpart to toDiffLines' equivalent test, so a
+    // future edit to just one of the two copies still gets caught.
+    const hunks = toSplitLines(users(buildDiffTree(base(), base()))).filter((l) => l.kind === 'hunk');
+    expect(hunks.map((h) => h.text)).toEqual([
+      '@@ -3 +3 @@ columns',
+      '@@ -1 +1 @@ constraints',
+      '@@ -1 +1 @@ indexes',
+    ]);
+  });
+
+  it('skips a section that has no rows on either side', () => {
+    const next = counterIdGen('z');
+    let head = applyOps(base(), [{ kind: 'create_table', name: 'bare' }], next);
+    const bareId = head.tables[1]!.id;
+    head = applyOps(head, [
+      { kind: 'add_column', tableId: bareId, name: 'id', type: { kind: 'int' }, nullable: false, default: null },
+    ], next);
+    const bare = buildDiffTree(base(), head).tables.find((t) => t.name === 'bare')!;
+    expect(toSplitLines(bare).filter((l) => l.kind === 'hunk').map((h) => h.text))
+      .toEqual(['@@ -0 +1 @@ columns']);
   });
 });
 

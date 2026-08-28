@@ -1264,7 +1264,7 @@ holds."
 
 ## Closing state
 
-309 tests pass; 20 database-backed tests skip themselves when `DATABASE_URL`
+317 tests pass; 20 database-backed tests skip themselves when `DATABASE_URL`
 is unset, so a clone with no Supabase project still runs the entire pure
 `core/` suite clean.
 

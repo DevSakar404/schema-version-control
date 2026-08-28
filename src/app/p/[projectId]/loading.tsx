@@ -14,30 +14,34 @@ export default function Loading() {
       </div>
 
       <div style={{ marginTop: '1.5rem' }}>
-        <div style={{ display: 'flex', gap: '1rem', padding: '0.5rem 0.25rem', borderBottom: '1px solid var(--border)' }}>
-          <Skeleton w="5rem" h="0.8rem" />
-          <Skeleton w="7rem" h="0.8rem" />
-          <Skeleton w="5rem" h="0.8rem" />
+        <div style={{ display: 'flex', gap: '1rem', padding: '0 0.6rem 0.6rem' }}>
+          <Skeleton w="4rem" h="0.7rem" />
+          <Skeleton w="6rem" h="0.7rem" />
+          <Skeleton w="5rem" h="0.7rem" />
         </div>
         {repeat(5).map((i) => (
           <div
             key={i}
             style={{
               display: 'grid',
-              gridTemplateColumns: '14rem 1fr 6rem 16rem',
+              gridTemplateColumns: '14rem 1fr 6rem 17rem',
               gap: '1rem',
               alignItems: 'center',
-              padding: '0.75rem 0.25rem',
-              borderBottom: '1px solid var(--border)',
+              padding: '0.85rem 0.6rem',
+              borderTop: '1px solid var(--border)',
             }}
           >
-            <Skeleton w={i === 0 ? '4rem' : '11rem'} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Skeleton w="0.9rem" h="0.9rem" style={{ borderRadius: '3px', flexShrink: 0 }} />
+              <Skeleton w={i === 0 ? '3.5rem' : '9rem'} />
+              {i === 0 && <Skeleton w="3.5rem" h="1.1rem" style={{ borderRadius: '999px' }} />}
+            </div>
             <div>
-              <Skeleton w="70%" style={{ marginBottom: '0.35rem' }} />
+              <Skeleton w="60%" style={{ marginBottom: '0.35rem' }} />
               <Skeleton w="5rem" h="0.7rem" />
             </div>
             <Skeleton w="3rem" h="0.8rem" />
-            <Skeleton w="14rem" h="2rem" style={{ marginLeft: 'auto' }} />
+            {i !== 0 && <Skeleton w="15rem" h="2rem" style={{ marginLeft: 'auto' }} />}
           </div>
         ))}
       </div>

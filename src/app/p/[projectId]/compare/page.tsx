@@ -3,19 +3,21 @@ import { notFound } from 'next/navigation';
 import { compareBranches } from '@/server/branches-service';
 import { getBranch } from '@/db/branches';
 import { getProject } from '@/db/projects';
-import { SchemaDiffTree } from '@/components/SchemaDiffTree';
+import type { DiffView } from '@/components/SchemaDiffTree';
+import { DiffViewToggle } from '@/components/DiffViewToggle';
 
 export const dynamic = 'force-dynamic';
 
 type Props = {
   params: Promise<{ projectId: string }>;
-  searchParams: Promise<{ base?: string; head?: string }>;
+  searchParams: Promise<{ base?: string; head?: string; view?: string }>;
 };
 
 export default async function ComparePage({ params, searchParams }: Props) {
   const { projectId } = await params;
-  const { base: baseId, head: headId } = await searchParams;
+  const { base: baseId, head: headId, view: viewParam } = await searchParams;
   if (!baseId || !headId) notFound();
+  const view: DiffView = viewParam === 'split' ? 'split' : 'unified';
 
   const [project, base, head] = await Promise.all([
     getProject(projectId),
@@ -47,7 +49,11 @@ export default async function ComparePage({ params, searchParams }: Props) {
         </div>
       ) : (
         <>
-          <SchemaDiffTree tree={tree} />
+          <DiffViewToggle
+            tree={tree}
+            initialView={view}
+            urlBase={`/p/${projectId}/compare?base=${baseId}&head=${headId}`}
+          />
           <div style={{ marginTop: '1.5rem' }}>
             <Link className="btn btn-primary" href={`/p/${projectId}/merge?target=${baseId}&source=${headId}`}>
               Merge {head.name} into {base.name}

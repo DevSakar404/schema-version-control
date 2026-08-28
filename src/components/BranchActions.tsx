@@ -13,6 +13,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { GitCompare, GitMerge } from 'lucide-react';
 
 interface BranchOption {
   id: string;
@@ -45,9 +46,11 @@ export function BranchActions({
         ))}
       </select>
       <Link className="btn" href={`/p/${projectId}/compare?base=${againstId}&head=${branch.id}`}>
+        <GitCompare size={14} strokeWidth={2} aria-hidden />
         Compare
       </Link>
       <Link className="btn btn-primary" href={`/p/${projectId}/merge?target=${againstId}&source=${branch.id}`}>
+        <GitMerge size={14} strokeWidth={2.25} aria-hidden />
         Merge
       </Link>
     </span>

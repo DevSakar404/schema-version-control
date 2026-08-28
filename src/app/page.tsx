@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { ChevronRight, Database, Sparkles } from 'lucide-react';
 import { listProjects } from '@/db/projects';
 import { SeedButton } from '@/components/SeedButton';
 import { NewProjectForm } from '@/components/NewProjectForm';
@@ -34,13 +35,17 @@ export default async function Home() {
             detector would catch, and a table dropped out from under a change to
             it — so there is something to look at immediately.
           </p>
-          <SeedButton label="Seed the demo" />
+          <SeedButton label="Seed the demo" icon={<Sparkles size={14} strokeWidth={2.25} aria-hidden />} />
         </div>
       ) : (
-        <ul style={{ listStyle: 'none', padding: 0, marginTop: '1.5rem' }}>
+        <ul className="scroll-list" style={{ listStyle: 'none', padding: 0, marginTop: '1.5rem' }}>
           {projects.map((p) => (
-            <li key={p.id} className="card" style={{ marginBottom: '0.75rem' }}>
-              <Link href={`/p/${p.id}`} style={{ fontWeight: 600 }}>{p.name}</Link>
+            <li key={p.id} className="card card-link" style={{ marginBottom: '0.6rem' }}>
+              <Link href={`/p/${p.id}`}>
+                <Database size={16} strokeWidth={2} aria-hidden />
+                {p.name}
+                <ChevronRight size={16} strokeWidth={2} className="chevron" aria-hidden />
+              </Link>
             </li>
           ))}
         </ul>

@@ -10,6 +10,8 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
+import { GitMerge } from 'lucide-react';
 import { ConflictCard } from './ConflictCard';
 import { HazardList } from './HazardList';
 import { MigrationPreview } from './MigrationPreview';
@@ -78,6 +80,7 @@ export function MergeBoard({
         setCommitError({ message: body.error?.message ?? 'merge failed', branchMoved: false });
         return;
       }
+      toast.success(`Merged ${preview.source.name} into ${preview.target.name}`);
       // Straight to the target branch's schema, not the project list — a
       // successful merge is the moment someone most wants to see what
       // actually landed, and the branch list only shows a commit message,
@@ -106,13 +109,11 @@ export function MergeBoard({
 
   return (
     <div>
-      <div
-        className="card"
-        style={{ position: 'sticky', top: '1rem', zIndex: 1, marginBottom: '1.5rem', display: 'flex', gap: '0.6rem', flexWrap: 'wrap', alignItems: 'center' }}
-      >
+      <div className="card toolbar">
         {previewing && <span className="text-dim">Updating preview…</span>}
         <input placeholder="your name" value={author} onChange={(e) => setAuthor(e.target.value)} style={{ width: '9rem' }} />
         <button type="button" className="btn btn-primary" disabled={commitDisabled} onClick={commit} title={disabledReason}>
+          <GitMerge size={14} strokeWidth={2.25} aria-hidden />
           {committing ? 'Merging…' : `Merge ${preview.source.name} into ${preview.target.name}`}
         </button>
       </div>

@@ -9,14 +9,15 @@
  */
 
 import { useState } from 'react';
+import { Check, Copy } from 'lucide-react';
 import type { Statement } from '@/core/migrate';
 import type { Safety } from '@/core/safety';
 
-const SAFETY: Record<Safety, { color: string; label: string }> = {
-  safe: { color: 'var(--safe)', label: 'safe' },
-  destructive: { color: 'var(--danger)', label: 'destructive' },
-  lossy: { color: 'var(--warning)', label: 'lossy' },
-  blocking: { color: 'var(--blocking)', label: 'blocking' },
+const SAFETY: Record<Safety, { pillClass: string; label: string }> = {
+  safe: { pillClass: 'pill-safe', label: 'safe' },
+  destructive: { pillClass: 'pill-danger', label: 'destructive' },
+  lossy: { pillClass: 'pill-warning', label: 'lossy' },
+  blocking: { pillClass: 'pill-blocking', label: 'blocking' },
 };
 
 export function MigrationPreview({ statements, sql }: { statements: Statement[]; sql: string }) {
@@ -37,6 +38,7 @@ export function MigrationPreview({ statements, sql }: { statements: Statement[];
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
         <h2 style={{ margin: 0, fontSize: '1.05rem' }}>Migration</h2>
         <button type="button" className="btn" onClick={copy} disabled={statements.length === 0}>
+          {copied ? <Check size={14} strokeWidth={2.25} aria-hidden /> : <Copy size={14} strokeWidth={2} aria-hidden />}
           {copied ? 'Copied' : 'Copy SQL'}
         </button>
       </div>
@@ -63,12 +65,12 @@ export function MigrationPreview({ statements, sql }: { statements: Statement[];
 }
 
 function StatementRow({ statement }: { statement: Statement }) {
-  const { color, label } = SAFETY[statement.safety];
+  const { pillClass, label } = SAFETY[statement.safety];
   const isTemp = statement.op.kind === 'rename_step' && statement.sql.includes('__tmp');
   return (
     <div style={{ padding: '0.4rem 0', borderTop: '1px solid var(--border)' }}>
       <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'baseline' }}>
-        <span className="pill" style={{ color, border: `1px solid ${color}`, flexShrink: 0 }}>{label}</span>
+        <span className={`pill ${pillClass}`} style={{ flexShrink: 0 }}>{label}</span>
         <code className="mono" style={{ fontSize: '0.85rem', whiteSpace: 'pre-wrap' }}>{statement.sql}</code>
       </div>
       {statement.note && (

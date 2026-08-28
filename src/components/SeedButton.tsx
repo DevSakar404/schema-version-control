@@ -6,10 +6,12 @@
  * same request either way, since seeding is a full reset, not an upsert.
  */
 
+import type { ReactNode } from 'react';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
 
-export function SeedButton({ label }: { label: string }) {
+export function SeedButton({ label, icon }: { label: string; icon?: ReactNode }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
 
@@ -18,7 +20,10 @@ export function SeedButton({ label }: { label: string }) {
     try {
       const res = await fetch('/api/seed', { method: 'POST' });
       const body = await res.json();
-      if (res.ok) router.push(`/p/${body.data.projectId}`);
+      if (res.ok) {
+        toast.success('Demo seeded');
+        router.push(`/p/${body.data.projectId}`);
+      }
     } finally {
       setPending(false);
     }
@@ -26,6 +31,7 @@ export function SeedButton({ label }: { label: string }) {
 
   return (
     <button type="button" className="btn btn-primary" onClick={seed} disabled={pending}>
+      {icon}
       {pending ? 'Seeding…' : label}
     </button>
   );

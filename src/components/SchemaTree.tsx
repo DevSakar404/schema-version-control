@@ -14,7 +14,10 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
+import { AlertTriangle, GitCommitHorizontal, Pencil, Plus, Search, SlidersHorizontal, Table2, Trash2, X } from 'lucide-react';
 import { Toast } from './Toast';
+import { emptyFacets, facetCount, tableMatchesFacets, toggled, FilterModal, type Facets } from './FilterModal';
 import { applyOps, type ConstraintPatch, type SchemaOp } from '@/core/ops';
 import { validate } from '@/core/validate';
 import { closureOf } from '@/core/closure';
@@ -36,10 +39,52 @@ const KINDS: ColumnType['kind'][] = [
   'smallint', 'int', 'bigint', 'boolean', 'uuid', 'date', 'timestamptz', 'jsonb', 'text', 'varchar', 'numeric',
 ];
 
+// Every edit affordance in this file goes through one `add()` (below), so a
+// toast here covers all of them — no risk of a call site quietly missing
+// its confirmation the way scattering `toast.success(...)` across a dozen
+// button handlers would. Exhaustive `Record` on purpose: adding a new
+// SchemaOp kind without a label here is a type error, not a silent gap.
+const OP_LABEL: Record<SchemaOp['kind'], string> = {
+  create_table: 'Table added',
+  drop_table: 'Table dropped',
+  rename_table: 'Table renamed',
+  add_column: 'Column added',
+  drop_column: 'Column dropped',
+  rename_column: 'Column renamed',
+  retype_column: 'Column type changed',
+  set_column_nullable: 'Column nullability changed',
+  set_column_default: 'Column default changed',
+  add_constraint: 'Constraint added',
+  drop_constraint: 'Constraint dropped',
+  alter_constraint: 'Constraint updated',
+  add_index: 'Index added',
+  drop_index: 'Index dropped',
+  alter_index: 'Index updated',
+};
+
 function defaultTypeFor(kind: ColumnType['kind']): ColumnType {
   if (kind === 'varchar') return { kind, length: 255 };
   if (kind === 'numeric') return { kind, precision: 10, scale: 2 };
   return { kind } as ColumnType;
+}
+
+/**
+ * A table matches a filter if the table itself does, or anything inside it
+ * does — a column, a constraint, an index. Matching keeps the WHOLE table
+ * visible rather than hiding just the non-matching columns within it: this
+ * is "find the table I'm looking for" in a schema with a dozen of them, not
+ * a row-level search, and a table with half its columns hidden would still
+ * need its own layout (constraint/index sections, the drop-table button)
+ * reasoned about in a state it never actually has.
+ */
+function tableMatchesFilter(schema: Schema, table: Table, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  if (table.name.toLowerCase().includes(q)) return true;
+  if (table.columns.some((c) => c.name.toLowerCase().includes(q))) return true;
+  if (schema.constraints.some((c) => c.tableId === table.id && c.name.toLowerCase().includes(q))) return true;
+  if (schema.indexes.some((i) => i.tableId === table.id && i.name.toLowerCase().includes(q))) return true;
+  return false;
 }
 
 export function SchemaTree({
@@ -59,6 +104,13 @@ export function SchemaTree({
   const [author, setAuthor] = useState('');
   const [committing, setCommitting] = useState(false);
   const [commitError, setCommitError] = useState<{ message: string; branchMoved: boolean } | null>(null);
+  const [filter, setFilter] = useState('');
+  // `facets` is what actually filters the table list; `draftFacets` is what
+  // the modal edits. They only converge on Apply — see FilterModal's file
+  // comment for why that split exists.
+  const [facets, setFacets] = useState<Facets>(emptyFacets);
+  const [draftFacets, setDraftFacets] = useState<Facets>(emptyFacets);
+  const [showFilters, setShowFilters] = useState(false);
 
   // Every add/create op built by this component already carries its own id
   // (see the id-divergence fix in core/ops.ts), so this generator is a
@@ -67,13 +119,44 @@ export function SchemaTree({
   const preview = useMemo(() => applyOps(schema, ops, counterIdGen('local')), [schema, ops]);
   const hazards = useMemo(() => validate(preview), [preview]);
   const errorHazards = hazards.filter((h) => h.severity === 'error');
+  const visibleTables = useMemo(
+    () => preview.tables.filter(
+      (table) => tableMatchesFilter(preview, table, filter) && tableMatchesFacets(preview, table, facets),
+    ),
+    [preview, filter, facets],
+  );
+  const activeFacetCount = facetCount(facets);
+  const filtering = filter.trim().length > 0 || activeFacetCount > 0;
 
-  const add = (op: SchemaOp) => setOps((prev) => [...prev, op]);
+  function openFilters() {
+    setDraftFacets(facets); // reflect whatever's actually applied right now, not last time's abandoned draft
+    setShowFilters(true);
+  }
+  function applyFilters() {
+    setFacets(draftFacets);
+    setShowFilters(false);
+  }
+  function resetFilters() {
+    const empty = emptyFacets();
+    setDraftFacets(empty);
+    setFacets(empty);
+  }
+
+  const add = (op: SchemaOp) => {
+    setOps((prev) => [...prev, op]);
+    // Same `id` every time: editing a schema is rarely one op, it's a dozen
+    // in a row (add a column, toggle nullable, set a default...) — without
+    // this each one stacks a new toast rather than updating the last.
+    toast.success(OP_LABEL[op.kind], { id: 'schema-op', description: 'Queued — commit to save it.' });
+  };
 
   // A handful of buttons queue more than one op as a single conceptual
-  // action (new table + its id column + the primary key on it). Queued as
-  // one batch so the uncommitted-changes count moves once, not three times.
-  const addBatch = (batch: SchemaOp[]) => setOps((prev) => [...prev, ...batch]);
+  // action (new table + its id column + the primary key on it). One toast
+  // for the whole batch, not one per op.
+  const addBatch = (ops: SchemaOp[], label: string) => {
+    setOps((prev) => [...prev, ...ops]);
+    toast.success(label, { id: 'schema-op', description: 'Queued — commit to save it.' });
+  };
 
   async function commit() {
     setCommitting(true);
@@ -93,6 +176,7 @@ export function SchemaTree({
         setCommitError({ message: body.error?.message ?? 'commit failed', branchMoved: false });
         return;
       }
+      toast.success('Changes committed', { description: message.trim() });
       setOps([]);
       setMessage('');
       router.refresh();
@@ -106,12 +190,7 @@ export function SchemaTree({
 
   return (
     <div>
-      {/* Deliberately not sticky — it was, and pinning the commit bar over a
-          long table read as clutter rather than convenience. */}
-      <div
-        className="card"
-        style={{ marginBottom: '1.5rem', display: 'flex', gap: '0.6rem', flexWrap: 'wrap', alignItems: 'center' }}
-      >
+      <div className="card toolbar">
         <strong className="mono">{branchName}</strong>
         <span className="text-dim">
           {ops.length === 0 ? 'no uncommitted changes' : `${ops.length} uncommitted change${ops.length === 1 ? '' : 's'}`}
@@ -135,6 +214,7 @@ export function SchemaTree({
                     : undefined
           }
         >
+          <GitCommitHorizontal size={14} strokeWidth={2.25} aria-hidden />
           {committing ? 'Committing…' : 'Commit'}
         </button>
       </div>
@@ -149,7 +229,10 @@ export function SchemaTree({
 
       {hazards.length > 0 && (
         <div className="card" style={{ marginBottom: '1.5rem', borderColor: errorHazards.length ? 'var(--danger)' : 'var(--warning)' }}>
-          <strong>{errorHazards.length > 0 ? 'This schema is invalid' : 'Warnings'}</strong>
+          <strong style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
+            <AlertTriangle size={15} strokeWidth={2.25} aria-hidden />
+            {errorHazards.length > 0 ? 'This schema is invalid' : 'Warnings'}
+          </strong>
           <ul style={{ margin: '0.4rem 0 0', paddingLeft: '1.2rem' }}>
             {hazards.map((h, i) => (
               <li key={i} style={{ color: h.severity === 'error' ? 'var(--danger)' : 'var(--warning)' }}>
@@ -160,9 +243,74 @@ export function SchemaTree({
         </div>
       )}
 
-      {preview.tables.map((table) => (
-        <TableSection key={table.id} table={table} schema={preview} onOp={add} />
-      ))}
+      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', maxWidth: '46rem', marginBottom: '0.75rem' }}>
+        <div style={{ position: 'relative', flex: '1 1 auto' }}>
+          <Search
+            size={14}
+            strokeWidth={2}
+            aria-hidden
+            style={{ position: 'absolute', left: '0.6rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-dim)' }}
+          />
+          <input
+            placeholder="Filter tables, columns, constraints, indexes…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            style={{ width: '100%', paddingLeft: '2rem', paddingRight: filter ? '2rem' : undefined }}
+          />
+          {filter && (
+            <button
+              type="button"
+              onClick={() => setFilter('')}
+              aria-label="Clear filter"
+              style={{
+                position: 'absolute', right: '0.4rem', top: '50%', transform: 'translateY(-50%)',
+                border: 'none', background: 'transparent', color: 'var(--text-dim)', cursor: 'pointer', padding: '0.2rem',
+              }}
+            >
+              <X size={14} strokeWidth={2} />
+            </button>
+          )}
+        </div>
+        <button
+          type="button"
+          className={`btn${activeFacetCount > 0 ? ' btn-primary' : ''}`}
+          onClick={openFilters}
+          aria-haspopup="dialog"
+          aria-expanded={showFilters}
+        >
+          <SlidersHorizontal size={14} strokeWidth={2} aria-hidden />
+          Filters{activeFacetCount > 0 ? ` (${activeFacetCount})` : ''}
+        </button>
+      </div>
+
+      <FilterModal
+        open={showFilters}
+        draft={draftFacets}
+        onToggleType={(kind) => setDraftFacets((prev) => ({ ...prev, types: toggled(prev.types, kind) }))}
+        onToggleNullable={(v) => setDraftFacets((prev) => ({ ...prev, nullable: toggled(prev.nullable, v) }))}
+        onToggleDefault={(v) => setDraftFacets((prev) => ({ ...prev, defaults: toggled(prev.defaults, v) }))}
+        onToggleConstraintKind={(kind) => setDraftFacets((prev) => ({ ...prev, constraintKinds: toggled(prev.constraintKinds, kind) }))}
+        onToggleIndexUnique={(v) => setDraftFacets((prev) => ({ ...prev, indexUnique: toggled(prev.indexUnique, v) }))}
+        onApply={applyFilters}
+        onReset={resetFilters}
+        onClose={() => setShowFilters(false)}
+      />
+
+      {filtering && (
+        <p className="text-dim" style={{ fontSize: '0.85rem', margin: '-0.25rem 0 1rem' }}>
+          {visibleTables.length} of {preview.tables.length} table{preview.tables.length === 1 ? '' : 's'} match
+        </p>
+      )}
+
+      {filtering && visibleTables.length === 0 ? (
+        <div className="card text-dim">
+          No tables, columns, constraints, or indexes match{filter ? ` "${filter}"` : ' the selected filters'}.
+        </div>
+      ) : (
+        visibleTables.map((table) => (
+          <TableSection key={table.id} table={table} schema={preview} onOp={add} />
+        ))
+      )}
 
       <AddTable
         onAdd={(name) => {
@@ -171,11 +319,14 @@ export function SchemaTree({
           // hand (design.md's own hazard list warns about it constantly).
           const tableId = nanoIdGen();
           const idColumnId = nanoIdGen();
-          addBatch([
-            { kind: 'create_table', name, id: tableId },
-            { kind: 'add_column', tableId, name: 'id', type: { kind: 'int' }, nullable: false, default: null, id: idColumnId },
-            { kind: 'add_constraint', constraint: { name: `${name}_pkey`, tableId, kind: 'primary_key', columnIds: [idColumnId] }, id: nanoIdGen() },
-          ]);
+          addBatch(
+            [
+              { kind: 'create_table', name, id: tableId },
+              { kind: 'add_column', tableId, name: 'id', type: { kind: 'int' }, nullable: false, default: null, id: idColumnId },
+              { kind: 'add_constraint', constraint: { name: `${name}_pkey`, tableId, kind: 'primary_key', columnIds: [idColumnId] }, id: nanoIdGen() },
+            ],
+            OP_LABEL.create_table,
+          );
         }}
       />
     </div>
@@ -194,6 +345,7 @@ function TableSection({ table, schema, onOp }: { table: Table; schema: Schema; o
   return (
     <section className="card" style={{ marginBottom: '1.25rem' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+        <Table2 size={16} strokeWidth={2} className="text-dim" aria-hidden />
         {editingName ? (
           <form
             onSubmit={(e) => {
@@ -220,7 +372,10 @@ function TableSection({ table, schema, onOp }: { table: Table; schema: Schema; o
               <button type="button" className="btn" onClick={() => setConfirmingDrop(false)}>Cancel</button>
             </span>
           ) : (
-            <button type="button" className="btn" onClick={() => setConfirmingDrop(true)}>Drop table</button>
+            <button type="button" className="btn" onClick={() => setConfirmingDrop(true)}>
+              <Trash2 size={13} strokeWidth={2} aria-hidden />
+              Drop table
+            </button>
           )}
         </div>
       </div>
@@ -257,7 +412,10 @@ function AddTable({ onAdd }: { onAdd: (name: string) => void }) {
         minLength={3}
         title="Table name must be at least 3 characters"
       />
-      <button type="submit" className="btn">Add table</button>
+      <button type="submit" className="btn">
+        <Plus size={13} strokeWidth={2} aria-hidden />
+        Add table
+      </button>
     </form>
   );
 }
@@ -374,7 +532,10 @@ function ColumnRow({
             <button type="button" className="btn" onClick={() => setConfirming(false)} style={{ marginLeft: '0.3rem' }}>Cancel</button>
           </>
         ) : (
-          <button type="button" className="btn" onClick={() => setConfirming(true)}>Drop</button>
+          <button type="button" className="btn" onClick={() => setConfirming(true)}>
+            <Trash2 size={13} strokeWidth={2} aria-hidden />
+            Drop
+          </button>
         )}
       </span>
       <input type="hidden" value={tableId} readOnly />
@@ -429,7 +590,10 @@ function AddColumn({
           <span className="text-dim">primary key</span>
         </label>
       )}
-      <button type="submit" className="btn">Add column</button>
+      <button type="submit" className="btn">
+        <Plus size={13} strokeWidth={2} aria-hidden />
+        Add column
+      </button>
     </form>
   );
 }
@@ -508,7 +672,12 @@ function ConstraintRow({ constraint, table, onOp }: { constraint: Constraint; ta
       )}
 
       <span style={{ marginLeft: 'auto', display: 'flex', gap: '0.3rem' }}>
-        {!editing && <button type="button" className="btn" onClick={() => setEditing(true)}>Edit</button>}
+        {!editing && (
+          <button type="button" className="btn" onClick={() => setEditing(true)}>
+            <Pencil size={13} strokeWidth={2} aria-hidden />
+            Edit
+          </button>
+        )}
         {confirming ? (
           <>
             <button type="button" className="btn" style={{ borderColor: 'var(--danger)', color: 'var(--danger)' }} onClick={() => onOp({ kind: 'drop_constraint', constraintId: constraint.id })}>
@@ -517,7 +686,10 @@ function ConstraintRow({ constraint, table, onOp }: { constraint: Constraint; ta
             <button type="button" className="btn" onClick={() => setConfirming(false)}>Cancel</button>
           </>
         ) : (
-          <button type="button" className="btn" onClick={() => setConfirming(true)}>Drop</button>
+          <button type="button" className="btn" onClick={() => setConfirming(true)}>
+            <Trash2 size={13} strokeWidth={2} aria-hidden />
+            Drop
+          </button>
         )}
       </span>
     </div>
@@ -720,7 +892,10 @@ function AddConstraint({ table, onOp }: { table: Table; onOp: (op: SchemaOp) => 
         </span>
       )}
       {kind === 'check' && <ExpressionBuilder columns={table.columns} value={expr} onChange={setExpr} />}
-      <button type="submit" className="btn">Add constraint</button>
+      <button type="submit" className="btn">
+        <Plus size={13} strokeWidth={2} aria-hidden />
+        Add constraint
+      </button>
       <span className="text-dim" style={{ fontSize: '0.8rem' }}>
         (foreign keys: add from the referencing table)
       </span>
@@ -770,7 +945,12 @@ function IndexRow({ index, table, onOp }: { index: Index; table: Table; onOp: (o
         </span>
       )}
       <span style={{ marginLeft: 'auto', display: 'flex', gap: '0.3rem' }}>
-        {!editing && <button type="button" className="btn" onClick={() => setEditing(true)}>Edit</button>}
+        {!editing && (
+          <button type="button" className="btn" onClick={() => setEditing(true)}>
+            <Pencil size={13} strokeWidth={2} aria-hidden />
+            Edit
+          </button>
+        )}
         {confirming ? (
           <>
             <button type="button" className="btn" style={{ borderColor: 'var(--danger)', color: 'var(--danger)' }} onClick={() => onOp({ kind: 'drop_index', indexId: index.id })}>
@@ -779,7 +959,10 @@ function IndexRow({ index, table, onOp }: { index: Index; table: Table; onOp: (o
             <button type="button" className="btn" onClick={() => setConfirming(false)}>Cancel</button>
           </>
         ) : (
-          <button type="button" className="btn" onClick={() => setConfirming(true)}>Drop</button>
+          <button type="button" className="btn" onClick={() => setConfirming(true)}>
+            <Trash2 size={13} strokeWidth={2} aria-hidden />
+            Drop
+          </button>
         )}
       </span>
     </div>
@@ -819,7 +1002,10 @@ function AddIndex({ table, onOp }: { table: Table; onOp: (op: SchemaOp) => void 
         <input type="checkbox" checked={unique} onChange={(e) => setUnique(e.target.checked)} />
         <span className="text-dim">unique</span>
       </label>
-      <button type="submit" className="btn">Add index</button>
+      <button type="submit" className="btn">
+        <Plus size={13} strokeWidth={2} aria-hidden />
+        Add index
+      </button>
     </form>
   );
 }

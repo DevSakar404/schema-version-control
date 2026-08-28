@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { GitBranch, RotateCcw } from 'lucide-react';
 import { getProjectOverview } from '@/server/branches-service';
 import { NotFound } from '@/server/http';
 import { NewBranchForm } from '@/components/NewBranchForm';
@@ -38,7 +39,9 @@ export default async function ProjectPage({ params }: Props) {
       </p>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
         <h1 style={{ margin: 0 }}>{project.name}</h1>
-        {project.id === DEMO_PROJECT_ID && <SeedButton label="Reset demo" />}
+        {project.id === DEMO_PROJECT_ID && (
+          <SeedButton label="Reset demo" icon={<RotateCcw size={14} strokeWidth={2.25} aria-hidden />} />
+        )}
       </div>
 
       <NewBranchForm
@@ -46,33 +49,38 @@ export default async function ProjectPage({ params }: Props) {
         branches={branches.map((b) => ({ id: b.id, name: b.name, headCommitId: b.headCommitId }))}
       />
 
-      <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '1.5rem' }}>
+      <table className="branch-table" style={{ marginTop: '1.5rem' }}>
         <thead>
-          <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border)' }}>
-            <th style={{ padding: '0.5rem 0.25rem' }}>Branch</th>
-            <th style={{ padding: '0.5rem 0.25rem' }}>Last change</th>
-            <th style={{ padding: '0.5rem 0.25rem' }}>Diverged</th>
-            <th style={{ padding: '0.5rem 0.25rem' }} />
+          <tr>
+            <th>Branch</th>
+            <th>Last change</th>
+            <th>Diverged</th>
+            <th />
           </tr>
         </thead>
         <tbody>
           {ordered.map((b) => (
-            <tr key={b.id} style={{ borderBottom: '1px solid var(--border)' }}>
-              <td style={{ padding: '0.6rem 0.25rem' }}>
-                <Link href={`/p/${project.id}/b/${b.id}`} className="mono" style={{ fontWeight: b.isDefault ? 700 : 500 }}>
-                  {b.name}
-                </Link>
+            <tr key={b.id}>
+              <td>
+                <span className="branch-name">
+                  <GitBranch size={14} strokeWidth={2} aria-hidden />
+                  <Link href={`/p/${project.id}/b/${b.id}`} className="mono" style={{ fontWeight: b.isDefault ? 700 : 500 }}>
+                    {b.name}
+                  </Link>
+                </span>
                 {b.isDefault && (
-                  <span className="pill" style={{ marginLeft: '0.5rem', background: 'var(--border)' }}>
+                  <span className="pill pill-accent" style={{ marginLeft: '0.5rem' }}>
                     default
                   </span>
                 )}
               </td>
-              <td style={{ padding: '0.6rem 0.25rem' }}>
-                <div>{b.lastMessage || <span className="text-dim">—</span>}</div>
+              <td>
+                <div className="commit-message" title={b.lastMessage ?? undefined}>
+                  {b.lastMessage || <span className="text-dim">—</span>}
+                </div>
                 {b.lastAuthor && <div className="text-dim">by {b.lastAuthor}</div>}
               </td>
-              <td style={{ padding: '0.6rem 0.25rem' }}>
+              <td>
                 {b.isDefault ? (
                   <span className="text-dim">—</span>
                 ) : b.ahead === 0 && b.behind === 0 ? (
@@ -85,7 +93,7 @@ export default async function ProjectPage({ params }: Props) {
                   </span>
                 )}
               </td>
-              <td style={{ padding: '0.6rem 0.25rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
+              <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                 {!b.isDefault && main && (
                   <BranchActions
                     projectId={project.id}

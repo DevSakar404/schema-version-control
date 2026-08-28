@@ -2,6 +2,8 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
+import { GitBranch } from 'lucide-react';
 import { Toast } from './Toast';
 
 interface BranchOption {
@@ -44,12 +46,13 @@ export function NewBranchForm({
       return;
     }
 
+    toast.success(`Branch "${name.trim()}" created`);
     setName('');
     startTransition(() => router.refresh());
   }
 
   return (
-    <form onSubmit={submit} className="card" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+    <form onSubmit={submit} className="card form-row" style={{ maxWidth: '42rem' }}>
       <input
         placeholder="new-branch-name"
         value={name}
@@ -67,6 +70,7 @@ export function NewBranchForm({
         ))}
       </select>
       <button type="submit" className="btn btn-primary" disabled={pending || !name.trim()}>
+        <GitBranch size={14} strokeWidth={2.25} aria-hidden />
         {pending ? 'Creating…' : 'New branch'}
       </button>
       {error && <Toast message={error} onDismiss={() => setError(null)} />}

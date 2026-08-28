@@ -14,7 +14,7 @@ Row data is out of scope. The artifact under version control is the schema.
 
 ## Status
 
-**Built. 309 tests passing.**
+**Built. 317 tests passing.**
 
 **Live:** https://schema-version-control.vercel.app — start at
 [the seeded demo](https://schema-version-control.vercel.app/p/demo), where
@@ -78,7 +78,7 @@ briefly removed the button).
 **Tests:**
 
 ```bash
-npm test          # 309 tests. Core suite needs no database at all.
+npm test          # 317 tests. Core suite needs no database at all.
 npm run typecheck
 npm run lint
 ```
@@ -86,7 +86,7 @@ npm run lint
 The database-backed tests (`tests/db/`) skip themselves automatically when
 `DATABASE_URL` is unset, so `npm test` runs clean on a machine with no
 Supabase project configured — only the pure `src/core/` suite runs, which is
-most of the 309.
+most of the 317.
 
 ---
 

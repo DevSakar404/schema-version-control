@@ -16,11 +16,14 @@
     "db:migrate": "vite-node scripts/migrate.ts"
   },
   "dependencies": {
+    "geist": "^1.7.2",
+    "lucide-react": "^1.34.0",
     "nanoid": "^5.0.9",
     "next": "^15.1.6",
     "postgres": "^3.4.5",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "sonner": "^2.0.8"
   },
   "devDependencies": {
     "@eslint/js": "^9.19.0",

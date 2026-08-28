@@ -56,7 +56,7 @@ function Card({ children }: { children: React.ReactNode }) {
 }
 
 function ResolvedBadge() {
-  return <span className="pill" style={{ background: 'var(--safe)', color: '#04101f' }}>resolved</span>;
+  return <span className="pill" style={{ background: 'var(--safe)', color: 'var(--on-solid)' }}>resolved</span>;
 }
 
 /* ------------------------------------------------------- delete_modify */

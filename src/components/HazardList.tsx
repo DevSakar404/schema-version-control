@@ -9,6 +9,7 @@
  * entity, not proof of blame (D24).
  */
 
+import { AlertTriangle } from 'lucide-react';
 import type { AttributedHazard } from '@/core/merge';
 
 export function HazardList({
@@ -25,7 +26,8 @@ export function HazardList({
 
   return (
     <section className="card" style={{ marginBottom: '1.5rem', borderColor: errors.length ? 'var(--danger)' : 'var(--warning)' }}>
-      <h2 style={{ margin: '0 0 0.3rem', fontSize: '1.05rem' }}>
+      <h2 style={{ margin: '0 0 0.3rem', fontSize: '1.05rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+        <AlertTriangle size={16} strokeWidth={2.25} aria-hidden />
         {errors.length > 0 ? 'This merge would be invalid' : 'Warnings'}
       </h2>
       <p className="text-dim" style={{ margin: '0 0 0.75rem', fontSize: '0.85rem' }}>
@@ -39,11 +41,11 @@ export function HazardList({
 }
 
 function HazardRow({ hazard, oursLabel, theirsLabel }: { hazard: AttributedHazard; oursLabel: string; theirsLabel: string }) {
-  const color = hazard.severity === 'error' ? 'var(--danger)' : 'var(--warning)';
+  const pillClass = hazard.severity === 'error' ? 'pill-danger' : 'pill-warning';
   return (
     <div style={{ padding: '0.5rem 0', borderTop: '1px solid var(--border)' }}>
       <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'baseline' }}>
-        <span className="pill" style={{ color, border: `1px solid ${color}` }}>{hazard.class.replace(/_/g, ' ')}</span>
+        <span className={`pill ${pillClass}`}>{hazard.class.replace(/_/g, ' ')}</span>
         <span>{hazard.description}</span>
       </div>
       <Attribution hazard={hazard} oursLabel={oursLabel} theirsLabel={theirsLabel} />

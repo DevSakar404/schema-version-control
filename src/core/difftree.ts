@@ -299,3 +299,101 @@ export function diffStat(lines: DiffLine[]): { added: number; removed: number } 
     removed: lines.filter((l) => l.kind === 'del').length,
   };
 }
+
+/** One line of a side-by-side row, or absent when that side has nothing to show. */
+export interface SplitCell {
+  no: number;
+  text: string;
+  changed: boolean;
+}
+
+export interface SplitLine {
+  kind: 'hunk' | 'row';
+  /** Hunk header text; empty for a `row`. */
+  text: string;
+  left: SplitCell | null;
+  right: SplitCell | null;
+  notes: string[];
+}
+
+/**
+ * The same rows as `toDiffLines`, shaped for side-by-side instead of
+ * unified rendering: one row per entity, old on the left and new on the
+ * right, rather than a del line followed by an add line.
+ *
+ * Deliberately walks `table`'s rows itself rather than post-processing
+ * `toDiffLines`' output by pairing up adjacent del/add lines — two
+ * DIFFERENT rows can just as easily land next to each other in that flat
+ * list (a dropped constraint immediately followed by an unrelated added
+ * one, say), and pairing by adjacency would silently show them as if one
+ * had replaced the other. Walking the rows directly has no such ambiguity:
+ * each `DiffRow` maps to exactly one `SplitLine`, always.
+ */
+export function toSplitLines(table: TableDiff): SplitLine[] {
+  const lines: SplitLine[] = [];
+  let beforeNo = 0;
+  let afterNo = 0;
+
+  const sections: [string, DiffRow<unknown>[]][] = [
+    ['columns', table.columns],
+    ['constraints', table.constraints],
+    ['indexes', table.indexes],
+  ];
+
+  for (const [name, rows] of sections) {
+    if (rows.length === 0) continue;
+
+    lines.push({
+      kind: 'hunk',
+      text: `@@ -${rows.filter((r) => r.before).length} +${rows.filter((r) => r.after).length} @@ ${name}`,
+      left: null,
+      right: null,
+      notes: [],
+    });
+
+    for (const row of rows) {
+      if (row.status === 'modified' && row.beforeLabel && row.afterLabel) {
+        lines.push({
+          kind: 'row',
+          text: '',
+          left: { no: ++beforeNo, text: row.beforeLabel, changed: true },
+          right: { no: ++afterNo, text: row.afterLabel, changed: true },
+          notes: row.notes,
+        });
+        continue;
+      }
+      if (row.status === 'added' && row.afterLabel) {
+        lines.push({
+          kind: 'row',
+          text: '',
+          left: null,
+          right: { no: ++afterNo, text: row.afterLabel, changed: true },
+          notes: row.notes,
+        });
+        continue;
+      }
+      if (row.status === 'dropped' && row.beforeLabel) {
+        lines.push({
+          kind: 'row',
+          text: '',
+          left: { no: ++beforeNo, text: row.beforeLabel, changed: true },
+          right: null,
+          notes: row.notes,
+        });
+        continue;
+      }
+      // Unchanged — see the matching comment in toDiffLines: the current
+      // label is what a reader wants on a context line, even if a rename
+      // elsewhere changed what that label says on each side.
+      lines.push({
+        kind: 'row',
+        text: '',
+        left: { no: ++beforeNo, text: row.beforeLabel ?? row.afterLabel ?? '', changed: false },
+        right: { no: ++afterNo, text: row.afterLabel ?? row.beforeLabel ?? '', changed: false },
+        notes: row.notes,
+      });
+    }
+  }
+
+  return lines;
+}
